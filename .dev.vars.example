@@ -1,0 +1,2 @@
+# Copy to .dev.vars for `npm run dev`. Never set DEV_LOGIN in production (it only works on localhost anyway).
+DEV_LOGIN=1

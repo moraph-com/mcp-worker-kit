@@ -1,0 +1,25 @@
+{
+  "name": "mcp-worker-kit",
+  "version": "0.1.0",
+  "description": "A remote MCP server on Cloudflare Workers with OAuth 2.1, permission tiers and an audit trail.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply mcp-worker-kit --remote",
+    "db:migrate:local": "wrangler d1 migrations apply mcp-worker-kit --local",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-reporter=spec test/*.test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261019.1",
+    "@types/node": "^24.19.2",
+    "typescript": "~5.9.3",
+    "wrangler": "^4.151.2"
+  }
+}
