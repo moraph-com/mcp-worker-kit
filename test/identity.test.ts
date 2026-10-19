@@ -1,3 +1,7 @@
+/**
+ * @file Sign-in providers (`src/identity.ts`): Cloudflare Access JWT verification against a local key pair and a fake
+ * JWKS endpoint, the localhost-only development sign-in, and the behaviour with no provider configured.
+ */
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import worker from '../src/index.ts';
@@ -15,6 +19,9 @@ let keys: CryptoKeyPair;
 let jwk: JsonWebKey;
 const realFetch = globalThis.fetch;
 let fetches = 0;
+/** Simulates an Access outage: the JWKS endpoint answers 503. */
+let down = false;
+let lastSignal: AbortSignal | null | undefined;
 
 async function sign(claims: Record<string, unknown>, kid = 'k1', key = keys.privateKey) {
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)));
@@ -41,9 +48,11 @@ describe('Cloudflare Access sign-in', () => {
       ['sign', 'verify'],
     )) as CryptoKeyPair;
     jwk = (await crypto.subtle.exportKey('jwk', keys.publicKey)) as JsonWebKey;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       fetches++;
+      lastSignal = init?.signal;
       assert.equal(String(input), `https://${TEAM}/cdn-cgi/access/certs`);
+      if (down) return new Response('unavailable', { status: 503 });
       return new Response(JSON.stringify({ keys: [{ ...jwk, kid: 'k1' }] }));
     }) as typeof fetch;
   });
@@ -53,6 +62,7 @@ describe('Cloudflare Access sign-in', () => {
   beforeEach(() => {
     resetAccessKeys();
     fetches = 0;
+    down = false;
   });
 
   it('accepts a valid token and caches the keys', async () => {
@@ -95,6 +105,7 @@ describe('Cloudflare Access sign-in', () => {
     assert.equal(await verifyAccessJwt(await sign(good(), 'k1', other.privateKey), env), null);
   });
 
+  // Random kids must not turn every sign-in attempt into an outbound request.
   it('refetches keys for an unknown kid at most every 30 seconds', async () => {
     assert.ok(await verifyAccessJwt(await sign(good()), env));
     for (let i = 0; i < 5; i++) assert.equal(await verifyAccessJwt(await sign(good(), `random-${i}`), env), null);
@@ -119,6 +130,15 @@ describe('Cloudflare Access sign-in', () => {
     });
     const u = await accessProvider.currentUser(req, env, new URL(req.url));
     assert.deepEqual(u, { id: 'access:user-1', name: 'boss@example.com', email: 'boss@example.com', roles: ['admin'] });
+  });
+
+  // A failed fetch used to be retried on every request, so an outage multiplied outbound traffic.
+  it('during an Access outage, asks for the keys at most every 30 seconds, with a timeout', async () => {
+    down = true;
+    assert.equal(await verifyAccessJwt(await sign(good()), env), null);
+    assert.equal(await verifyAccessJwt(await sign(good()), env), null);
+    assert.equal(fetches, 1);
+    assert.ok(lastSignal instanceof AbortSignal, 'the fetch can time out');
   });
 });
 
@@ -147,6 +167,32 @@ describe('development sign-in', () => {
       assert.equal(new URL(res.headers.get('location')!, 'http://localhost:8787').host, 'localhost:8787');
     });
   }
+});
+
+describe('development sign-in: sessions and limits', () => {
+  it('refuses an oversized sign-in form without reading it whole', async () => {
+    const k = setup();
+    const res = await k.call('/dev/login?next=/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'http://localhost:8787' },
+      body: `name=A&pad=${'x'.repeat(10000)}`,
+    });
+    assert.equal(res.status, 413);
+  });
+
+  // Clearing the cookie alone left a session token that still worked until it expired.
+  it('ends the session on the server at logout', async () => {
+    const k = setup();
+    const login = await k.call('/dev/login?next=/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'http://localhost:8787' },
+      body: 'name=Alice',
+    });
+    const cookie = login.headers.getSetCookie()[0].split(';')[0];
+    assert.equal(k.rows('SELECT * FROM dev_sessions').length, 1);
+    await k.call('/dev/logout', { headers: { cookie } });
+    assert.equal(k.rows('SELECT * FROM dev_sessions').length, 0);
+  });
 });
 
 describe('no sign-in configured', () => {

@@ -5,7 +5,7 @@
   "compatibility_date": "2026-10-01",
   "observability": { "enabled": true },
 
-  // Expired OAuth rows and old tool-call records are removed once a day (src/oauth.ts daily()).
+  // Expired OAuth rows, old grants and old tool-call records are removed once a day (src/oauth.ts daily()).
   "triggers": { "crons": ["17 4 * * *"] },
 
   "d1_databases": [
@@ -24,7 +24,19 @@
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
     "ADMIN_EMAILS": "",
+    // Browser origins, besides this server's own, allowed to call /mcp and /public (comma-separated, or "*").
+    // Requests without an Origin header (assistants calling from their servers, native apps) are always allowed.
+    "ALLOWED_ORIGINS": "",
   },
+
+  // Secrets are not set here. Set the salt for per-network rate-limit keys with:
+  //   npx wrangler secret put IP_SALT
+
+  // Optional: Workers Rate Limiting on the anonymous endpoints (/public, /oauth/register, /oauth/authorize,
+  // /oauth/token, /oauth/revoke), counted per network (an IPv4 address or an IPv6 /64). Turn it on if /public is
+  // exposed to the internet: each public tool call writes an audit row. Hosted assistants call from shared networks,
+  // so keep the limit generous. namespace_id is any number unique within your account.
+  // "ratelimits": [{ "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } }],
 
   // Local development only: `wrangler dev` reads .dev.vars, where DEV_LOGIN=1 turns on the name-only dev sign-in.
   // It never works on a hostname other than localhost or 127.0.0.1.

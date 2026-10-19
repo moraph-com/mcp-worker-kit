@@ -1,5 +1,11 @@
+/**
+ * @file The OAuth 2.1 authorization server (`src/oauth.ts`): metadata, registration, the authorization-code flow with
+ * PKCE, consent, refresh rotation and reuse detection, revocation, audience binding, lifetimes, races and clean-up.
+ * Each security rule has a test showing what is now refused.
+ */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import worker from '../src/index.ts';
 import type { IdentityProvider } from '../src/identity.ts';
 import { continueAuth } from '../src/oauth.ts';
 import {
@@ -125,10 +131,11 @@ describe('authorization code with PKCE', () => {
       code_challenge_method: 'plain',
     });
     const res = await k.call(`/oauth/authorize?${qs}`);
-    assert.equal(res.status, 302);
-    assert.equal(new URL(res.headers.get('location')!).searchParams.get('error'), 'invalid_request');
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /error=invalid_request/);
   });
 
+  // RFC 6749 §4.1.2.1: with a bad redirect URI, nothing may be sent there, not even an error.
   it('refuses an unregistered redirect URI without redirecting there', async () => {
     const k = setup();
     const c = await registerClient(k);
@@ -158,7 +165,8 @@ describe('authorization code with PKCE', () => {
       resource: 'https://other.example/mcp',
     });
     const res = await k.call(`/oauth/authorize?${qs}`);
-    assert.equal(new URL(res.headers.get('location')!).searchParams.get('error'), 'invalid_target');
+    assert.equal(res.headers.get('location'), null);
+    assert.match(await res.text(), /error=invalid_target/);
   });
 
   it('rejects the wrong code verifier', async () => {
@@ -341,12 +349,7 @@ describe('daily clean-up', () => {
     await connect(k);
     k.db.sqlite.exec("UPDATE oauth_tokens SET expires_at = '2000-01-01 00:00:00'");
     k.db.sqlite.exec("INSERT INTO tool_calls (tool, ok, ms, created_at) VALUES ('old', 1, 1, '2000-01-01 00:00:00')");
-    const { default: worker } = await import('../src/index.ts');
-    const waits: Promise<unknown>[] = [];
-    await worker.scheduled({} as ScheduledController, k.env, {
-      waitUntil: (p: Promise<unknown>) => waits.push(p),
-    } as unknown as ExecutionContext);
-    await Promise.all(waits);
+    await worker.scheduled({} as ScheduledController, k.env);
     assert.equal(k.rows('SELECT * FROM oauth_tokens').length, 0);
     assert.equal(k.rows("SELECT * FROM tool_calls WHERE tool = 'old'").length, 0);
   });
@@ -356,6 +359,7 @@ describe('races and lifetimes', () => {
   const refresh = (k: ReturnType<typeof setup>, clientId: string, token: string) =>
     k.call('/oauth/token', form({ grant_type: 'refresh_token', client_id: clientId, refresh_token: token }));
 
+  // With simulated D1 latency both requests read the token as unused; only the conditional UPDATE can tell them apart.
   it('lets only one of two concurrent refreshes win, and ends the connection', async () => {
     const k = setup(undefined, { latency: true });
     const t = await connect(k);
@@ -391,6 +395,7 @@ describe('races and lifetimes', () => {
     assert.match(((await res.json()) as any).error_description, /time limit/);
   });
 
+  // Ten minutes before the grant's end, a refresh must not hand out a full hour.
   it("never issues a token that outlives the grant's limit", async () => {
     const k = setup();
     const t = await connect(k);
@@ -481,6 +486,7 @@ describe('spec details', () => {
     assert.equal(res.status, 403);
   });
 
+  // decodeURIComponent throws on a broken escape; another app's cookie must not break sign-in here.
   it('survives a malformed cookie from another app on the same host', async () => {
     const k = setup();
     const res = await k.call(`/oauth/continue?req=${'a'.repeat(32)}`, { headers: { cookie: 'other=%E0%A4%A' } });
@@ -497,12 +503,7 @@ describe('client clean-up', () => {
     k.db.sqlite.exec(
       `UPDATE oauth_clients SET created_at = '2000-01-01 00:00:00' WHERE id IN ('${used.clientId}', '${unused.client_id}')`,
     );
-    const { default: worker } = await import('../src/index.ts');
-    const waits: Promise<unknown>[] = [];
-    await worker.scheduled({} as ScheduledController, k.env, {
-      waitUntil: (p: Promise<unknown>) => waits.push(p),
-    } as unknown as ExecutionContext);
-    await Promise.all(waits);
+    await worker.scheduled({} as ScheduledController, k.env);
     assert.deepEqual(
       k
         .rows('SELECT id FROM oauth_clients ORDER BY id')
@@ -510,5 +511,229 @@ describe('client clean-up', () => {
         .sort(),
       [used.clientId, fresh.client_id].sort(),
     );
+  });
+});
+
+/** The query string of an authorization request for `clientId`, with any parameter overridden. */
+const authorizeQuery = (clientId: string, challenge: string, extra: Record<string, string> = {}) =>
+  new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: REDIRECT,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    ...extra,
+  });
+
+describe('no open redirects (RFC 9700 §4.11.2)', () => {
+  // Anyone can register a phishing page as a redirect URI. A broken request must not bounce people there unseen.
+  it('shows authorization errors on a page with a link instead of redirecting', async () => {
+    const k = setup();
+    const c = await registerClient(k, { redirect_uris: ['https://phish.example/login'] });
+    const res = await k.call(`/oauth/authorize?client_id=${c.client_id}&response_type=token&state=s1`);
+    assert.equal(res.status, 400);
+    assert.equal(res.headers.get('location'), null);
+    const html = await res.text();
+    assert.match(html, /Return to phish\.example/);
+    assert.match(html, /href="https:\/\/phish\.example\/login\?error=unsupported_response_type&amp;[^"]*state=s1/);
+  });
+});
+
+describe('token audience (RFC 8707)', () => {
+  // The same Worker answers on several hostnames (custom domain, workers.dev). A token is for one of them only.
+  it('refuses an access token at a resource it was not issued for', async () => {
+    const k = setup();
+    const t = await connect(k);
+    const ping = (base: string) =>
+      k.call(`${base}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${t.access_token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+      });
+    assert.equal((await ping(ORIGIN)).status, 200);
+    assert.equal((await ping('http://127.0.0.1:8787')).status, 401);
+  });
+
+  it('carries the audience through refresh and checks a resource sent with it', async () => {
+    const k = setup();
+    const t = await connect(k);
+    const other = await k.call(
+      '/oauth/token',
+      form({
+        grant_type: 'refresh_token',
+        client_id: t.clientId,
+        refresh_token: t.refresh_token,
+        resource: 'https://x.example/mcp',
+      }),
+    );
+    assert.equal(((await other.json()) as any).error, 'invalid_target');
+    const ok = await k.call(
+      '/oauth/token',
+      form({
+        grant_type: 'refresh_token',
+        client_id: t.clientId,
+        refresh_token: t.refresh_token,
+        resource: 'HTTP://LOCALHOST:8787/mcp/',
+      }),
+    );
+    assert.equal(ok.status, 200, 'scheme and host compare case-insensitively, a trailing slash is ignored');
+    assert.deepEqual(k.rows('SELECT DISTINCT resource FROM oauth_tokens'), [{ resource: `${ORIGIN}/mcp` }]);
+  });
+});
+
+describe('token endpoint details', () => {
+  const refresh = (k: ReturnType<typeof setup>, clientId: string, token: string) =>
+    k.call('/oauth/token', form({ grant_type: 'refresh_token', client_id: clientId, refresh_token: token }));
+
+  it('refuses to refresh for a person who has been disabled', async () => {
+    const k = setup();
+    const t = await connect(k);
+    k.db.sqlite.exec("UPDATE users SET disabled_at = datetime('now')");
+    const res = await refresh(k, t.clientId, t.refresh_token);
+    assert.equal(res.status, 400);
+    assert.equal(
+      k.rows("SELECT * FROM oauth_tokens WHERE used_at IS NULL AND kind = 'refresh'").length,
+      1,
+      'nothing new issued',
+    );
+  });
+
+  it('accepts tokens only with their exact prefix', async () => {
+    const k = setup();
+    const t = await connect(k);
+    assert.equal((await refresh(k, t.clientId, t.refresh_token.slice(6))).status, 400);
+    assert.equal((await refresh(k, t.clientId, `x${t.refresh_token}`)).status, 400);
+    assert.equal((await refresh(k, t.clientId, t.refresh_token)).status, 200);
+  });
+
+  it('authenticates confidential clients with HTTP Basic, and says so when it fails (RFC 6749 §5.2)', async () => {
+    const k = setup();
+    const c = await registerClient(k, { token_endpoint_auth_method: 'client_secret_basic' });
+    const basic = (secret: string) => `Basic ${btoa(`${c.client_id}:${secret}`)}`;
+    const bad = await k.call('/oauth/token', {
+      ...form({ grant_type: 'refresh_token', refresh_token: 'x' }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic('wrong') },
+    });
+    assert.equal(bad.status, 401);
+    assert.match(bad.headers.get('www-authenticate')!, /^Basic/);
+    const good = await k.call('/oauth/token', {
+      ...form({ grant_type: 'refresh_token', refresh_token: 'x' }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: basic(c.client_secret!) },
+    });
+    assert.equal(((await good.json()) as any).error, 'invalid_grant', 'client accepted; the token is what is wrong');
+  });
+
+  it('answers other methods with 405 and an Allow header', async () => {
+    const k = setup();
+    const res = await k.call('/oauth/token');
+    assert.equal(res.status, 405);
+    assert.equal(res.headers.get('allow'), 'POST, OPTIONS');
+  });
+});
+
+describe('authorization requests', () => {
+  // Starting a second connection in the same browser used to replace the first one's cookie.
+  it('lets two authorizations started in the same browser both continue', async () => {
+    const k = setup();
+    const c = await registerClient(k);
+    const { challenge } = await pkce();
+    const a1 = await k.call(`/oauth/authorize?${authorizeQuery(c.client_id, challenge)}`);
+    const cookie = a1.headers.getSetCookie()[0].split(';')[0];
+    const a2 = await k.call(`/oauth/authorize?${authorizeQuery(c.client_id, challenge)}`, { headers: { cookie } });
+    assert.equal(a2.headers.getSetCookie()[0].split(';')[0], cookie, 'the binding is reused');
+    const login = await k.call('/dev/login', {
+      ...form({ name: 'Alice' }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN },
+    });
+    const both = `${cookie}; ${login.headers.getSetCookie()[0].split(';')[0]}`;
+    for (const a of [a1, a2])
+      assert.equal((await k.call(a.headers.get('location')!, { headers: { cookie: both } })).status, 200);
+  });
+
+  // /oauth/authorize takes no credentials and writes a row; one script must not be able to write rows forever.
+  it('limits pending authorization requests per network', async () => {
+    const k = setup();
+    const c = await registerClient(k);
+    const { challenge } = await pkce();
+    k.db.sqlite.exec(
+      `INSERT INTO oauth_requests (id, browser_hash, client_id, params, network_hash, expires_at)
+       SELECT hex(randomblob(16)), 'x', '${c.client_id}', '{}', (SELECT network_hash FROM oauth_clients), datetime('now', '+15 minutes')
+       FROM (WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 60) SELECT i FROM n)`,
+    );
+    const res = await k.call(`/oauth/authorize?${authorizeQuery(c.client_id, challenge)}`);
+    assert.equal(res.status, 429);
+  });
+
+  it('refuses an oversized consent form without reading it whole', async () => {
+    const k = setup();
+    const c = await registerClient(k);
+    const a = await k.call(`/oauth/authorize?${authorizeQuery(c.client_id, (await pkce()).challenge)}`);
+    const login = await k.call('/dev/login', {
+      ...form({ name: 'Alice' }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN },
+    });
+    const cookie = `${a.headers.getSetCookie()[0].split(';')[0]}; ${login.headers.getSetCookie()[0].split(';')[0]}`;
+    const res = await k.call(a.headers.get('location')!, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN, cookie },
+      body: `decision=approve&pad=${'x'.repeat(20000)}`,
+    });
+    assert.equal(res.status, 413);
+    assert.equal(k.rows('SELECT * FROM oauth_grants').length, 0);
+  });
+
+  // Any local program can claim a loopback port, so the consent screen says where the code is going.
+  it('warns on the consent screen when the assistant returns to this computer', async () => {
+    const k = setup();
+    const c = await registerClient(k, { redirect_uris: ['http://127.0.0.1/cb'] });
+    const a = await k.call(
+      `/oauth/authorize?${authorizeQuery(c.client_id, (await pkce()).challenge, { redirect_uri: 'http://127.0.0.1:5555/cb' })}`,
+    );
+    const login = await k.call('/dev/login', {
+      ...form({ name: 'Alice' }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN },
+    });
+    const cookie = `${a.headers.getSetCookie()[0].split(';')[0]}; ${login.headers.getSetCookie()[0].split(';')[0]}`;
+    const html = await (await k.call(a.headers.get('location')!, { headers: { cookie } })).text();
+    assert.match(html, /runs on your own computer \(it returns to <strong>127\.0\.0\.1:5555<\/strong>\)/);
+  });
+});
+
+describe('registration details', () => {
+  // A single IPv6 /64 holds 2^64 addresses; counting per address would make the limit meaningless.
+  it('counts IPv6 registrations per /64', async () => {
+    const k = setup();
+    const reg = (ip: string) =>
+      k.call('/oauth/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
+        body: JSON.stringify({ redirect_uris: [REDIRECT] }),
+      });
+    for (let i = 1; i <= 30; i++) assert.equal((await reg(`2001:db8:aa:bb::${i.toString(16)}`)).status, 201);
+    assert.equal((await reg('2001:db8:aa:bb:ffff::1')).status, 429);
+    assert.equal((await reg('2001:db8:aa:cc::1')).status, 201, 'another /64 is another network');
+  });
+
+  it('ignores metadata of the wrong type and echoes client_uri', async () => {
+    const k = setup();
+    const c = (await registerClient(k, {
+      client_name: { evil: true },
+      client_uri: 'https://assistant.example',
+    })) as any;
+    assert.equal(c.client_name, 'AI assistant');
+    assert.equal(c.client_uri, 'https://assistant.example');
+  });
+});
+
+describe('grant clean-up', () => {
+  // Grants used to be kept forever; they are now kept as long as the audit records that point at them.
+  it('deletes grants older than the audit period, and then their clients', async () => {
+    const k = setup();
+    const t = await connect(k);
+    k.db.sqlite.exec("UPDATE oauth_grants SET created_at = '2000-01-01 00:00:00'");
+    k.db.sqlite.exec("UPDATE oauth_clients SET created_at = '2000-01-01 00:00:00'");
+    await worker.scheduled({} as ScheduledController, k.env);
+    assert.equal(k.rows('SELECT * FROM oauth_grants').length, 0);
+    assert.equal(k.rows('SELECT * FROM oauth_clients WHERE id = ?', t.clientId).length, 0);
   });
 });

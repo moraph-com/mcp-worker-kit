@@ -1,6 +1,11 @@
+/**
+ * @file The argument checker (`src/tools/validate.ts`) on its own, plus the small helpers whose edge cases matter for
+ * security (`network`, `safeNext`).
+ */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { check, type Schema } from '../src/tools/validate.ts';
+import { network, safeNext } from '../src/util.ts';
 
 describe('argument checking (validate.ts)', () => {
   const s: Schema = {
@@ -41,4 +46,36 @@ describe('argument checking (validate.ts)', () => {
   it('counts characters, not UTF-16 units', () => {
     assert.equal(check('😀😀😀', { type: 'string', maxLength: 3 }), null);
   });
+});
+
+describe('argument checking: own properties only', () => {
+  const closed: Schema = { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false };
+  // These names exist on Object.prototype, so a plain lookup used to find a constraint-free "sub-schema" for them.
+  for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__'])
+    it(`treats ${key} as an unknown argument`, () => {
+      assert.match(String(check(JSON.parse(`{"${key}": 1}`), closed)), /isn't a known argument/);
+    });
+
+  it('does not count an inherited property as a present required argument', () => {
+    assert.match(String(check({}, { type: 'object', required: ['toString'] })), /toString is required/);
+  });
+});
+
+describe('network (rate-limit key)', () => {
+  const cases: [string, string][] = [
+    ['192.0.2.7', '192.0.2.7'],
+    ['2001:db8:1:2:3:4:5:6', '2001:db8:1:2::/64'],
+    ['2001:db8::1', '2001:db8:0:0::/64'],
+    ['2001:DB8:0001:0002::', '2001:db8:1:2::/64'],
+    ['::1', '0:0:0:0::/64'],
+    ['::ffff:192.0.2.7', '192.0.2.7'],
+  ];
+  for (const [ip, want] of cases) it(`${ip} → ${want}`, () => assert.equal(network(ip), want));
+});
+
+describe('safeNext (post-sign-in redirect)', () => {
+  // Browsers drop tabs and newlines and read \ as /, so each of these would leave the site.
+  for (const bad of ['//evil.example', '/\\evil.example', '/\t/evil.example', 'https://evil.example', '', 42])
+    it(`refuses ${JSON.stringify(bad)}`, () => assert.equal(safeNext(bad), '/'));
+  it('keeps a path on this site', () => assert.equal(safeNext('/oauth/continue?req=1'), '/oauth/continue?req=1'));
 });

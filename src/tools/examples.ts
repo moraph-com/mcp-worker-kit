@@ -1,6 +1,16 @@
-// Example tools over the demo notes table. Replace them with your own; keep the shape.
+/**
+ * @file Example tools over the demo `notes` table. Replace them with your own, and keep the pattern:
+ *
+ * - **Read tools** (`readOnlyHint: true`) can be rich. That's where assistants are most useful.
+ * - **Write tools** (`write: true`) cover everyday actions only, and their descriptions tell the assistant to confirm
+ *   with the person first.
+ * - **Every query is scoped to `c.user`.** The tool acts as the person, so it sees what they see and nothing more.
+ *
+ * The two connection tools let anyone review and end their own connections, even over a read-only connection:
+ * ending a connection is the safe direction, so it never needs the write scope.
+ */
 import { SERVER } from '../config.ts';
-import { revokeGrant } from '../oauth.ts';
+import { liveConnections, revokeGrant } from '../oauth.ts';
 import { all, one, q, randomId } from '../util.ts';
 import { fail, lim, str, type Tool } from './types.ts';
 
@@ -22,7 +32,7 @@ export const EXAMPLE_TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Words to look for; empty lists the newest notes.' },
+        query: { type: 'string', maxLength: 200, description: 'Words to look for; empty lists the newest notes.' },
         limit: { type: 'integer', minimum: 1, maximum: 50 },
       },
       additionalProperties: false,
@@ -30,11 +40,14 @@ export const EXAMPLE_TOOLS: Tool[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
     access: 'public',
     async run(c, args) {
+      // At most eight words, so a query can't be turned into an arbitrarily long chain of LIKE clauses.
       const words = str(args.query, 200).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
-      // % and _ in what the person typed are literal characters, not wildcards.
+      // % and _ in what the person typed are literal characters, not wildcards: escape them, and say which escape
+      // character is in use.
       const like = words.map(() => "(lower(title) LIKE ? ESCAPE '\\' OR lower(body) LIKE ? ESCAPE '\\')").join(' AND ');
       const binds = words.map((w) => `%${w.replace(/[\\%_]/g, '\\$&')}%`).flatMap((p) => [p, p]);
-      const notes = await all(
+      // owner_id = '' never matches a real owner, so an anonymous caller sees public notes only.
+      const notes = await all<{ id: string; title: string; body: string; created_at: string; private: number }>(
         c.env,
         `SELECT id, title, body, created_at, owner_id IS NOT NULL AS private FROM notes
         WHERE (owner_id IS NULL OR owner_id = ?)${like ? ` AND ${like}` : ''} ORDER BY created_at DESC, id LIMIT ?`,
@@ -105,14 +118,11 @@ export const CONNECTION_TOOLS: Tool[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
     access: 'signed_in',
     run: async (c) => ({
-      connections: (
-        await all<{ id: string; name: string; scopes: string; created_at: string; last_used_at: string | null }>(
-          c.env,
-          `SELECT g.id, c.name, g.scopes, g.created_at, g.last_used_at FROM oauth_grants g JOIN oauth_clients c ON c.id = g.client_id
-         WHERE g.user_id = ? AND g.revoked_at IS NULL ORDER BY g.created_at DESC`,
-          c.user!.id,
-        )
-      ).map((g) => ({ ...g, scopes: g.scopes.split(' '), this_connection: g.id === c.grant?.id })),
+      connections: (await liveConnections(c.env, c.user!.id)).map((g) => ({
+        ...g,
+        scopes: g.scopes.split(' '),
+        this_connection: g.id === c.grant?.id,
+      })),
     }),
   },
   {
@@ -122,7 +132,7 @@ export const CONNECTION_TOOLS: Tool[] = [
       'End one of your connections (from my_connections). Ending this_connection disconnects this assistant now.',
     inputSchema: {
       type: 'object',
-      properties: { connection_id: { type: 'string' } },
+      properties: { connection_id: { type: 'string', maxLength: 64 } },
       required: ['connection_id'],
       additionalProperties: false,
     },
@@ -130,6 +140,7 @@ export const CONNECTION_TOOLS: Tool[] = [
     access: 'signed_in',
     async run(c, args) {
       const id = str(args.connection_id, 64);
+      // `AND user_id = ?` is the authorization check: someone else's connection id simply isn't found.
       const g = await one(
         c.env,
         'SELECT id FROM oauth_grants WHERE id = ? AND user_id = ? AND revoked_at IS NULL',

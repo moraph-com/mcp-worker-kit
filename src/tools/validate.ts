@@ -1,8 +1,20 @@
-// Checks a tool's arguments against its inputSchema before it runs, so every tool can trust the shape it's given.
-// Covers the JSON Schema an MCP tool usually needs: type (object, string, integer, number, boolean, array, null),
-// properties, required, additionalProperties: false, enum, minLength/maxLength, minimum/maximum, items, minItems/maxItems.
-// Anything else in a schema is ignored, not refused. For the full language, swap in a library such as @cfworker/json-schema.
+/**
+ * @file Checks a tool's arguments against its `inputSchema` before the tool runs, so every tool can trust the shape
+ * of what it receives.
+ *
+ * This covers the part of JSON Schema that MCP tools usually need: `type` (object, string, integer, number, boolean,
+ * array, null, or a list of them), `properties`, `required`, `additionalProperties: false`, `enum`,
+ * `minLength`/`maxLength` (counted in Unicode code points, as JSON Schema specifies), `minimum`/`maximum`, `items` and
+ * `minItems`/`maxItems`. Other keywords (`format`, `pattern`, `oneOf`, …) are passed on to clients but **not
+ * checked**, so a tool that relies on one must check it in `run`. For the full language, swap in a library such as
+ * `@cfworker/json-schema`, which runs on Workers.
+ *
+ * The cost is bounded by the schema, not by the input. The checker only recurses where the schema has a
+ * sub-schema, so a deeply nested argument can't make it do more work than the schema describes, and the 64 KB body
+ * limit bounds everything else.
+ */
 
+/** The JSON Schema subset understood here. Unknown keywords are allowed and ignored. */
 export type Schema = {
   type?: string | string[];
   properties?: Record<string, Schema>;
@@ -21,12 +33,23 @@ export type Schema = {
   [keyword: string]: unknown;
 };
 
+/** The JSON Schema type name of a parsed JSON value. Whole numbers count as `integer`, as JSON Schema says. */
 const typeOf = (v: unknown) =>
   v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v;
+/** `integer` is a subtype of `number`, so a whole number satisfies `type: "number"` too. */
 const fits = (v: unknown, type: string) =>
   typeOf(v) === type || (type === 'number' && typeof v === 'number' && Number.isFinite(v));
 
-/** The first problem with `value`, in words an assistant can act on, or null if it fits. */
+/** Names quoted in messages are cut short, so an absurd key can't produce an absurd message. */
+const label = (k: string) => (k.length > 64 ? `${k.slice(0, 64)}…` : k);
+
+/**
+ * Finds the first way `value` fails `schema`.
+ *
+ * @param path - How to name `value` in the message. Nested calls extend it, e.g. `arguments.tags[2]`.
+ * @returns A message an assistant can act on ("arguments.title is required."), or null if `value` fits. The message
+ *   can quote argument names the caller chose, so it goes back to the caller but is never written to the audit log.
+ */
 export function check(value: unknown, schema: Schema, path = 'arguments'): string | null {
   if (schema.type) {
     const types = Array.isArray(schema.type) ? schema.type : [schema.type];
@@ -35,6 +58,7 @@ export function check(value: unknown, schema: Schema, path = 'arguments'): strin
   if (schema.enum && !schema.enum.some((e) => e === value))
     return `${path} must be one of ${schema.enum.map((e) => JSON.stringify(e)).join(', ')}.`;
   if (typeof value === 'string') {
+    // Code points, not UTF-16 units: "😀" is one character to JSON Schema and to the person typing it.
     const n = [...value].length;
     if (schema.minLength !== undefined && n < schema.minLength)
       return `${path} must be at least ${schema.minLength} characters.`;
@@ -58,13 +82,18 @@ export function check(value: unknown, schema: Schema, path = 'arguments'): strin
   }
   if (typeOf(value) === 'object') {
     const o = value as Record<string, unknown>;
-    for (const k of schema.required || []) if (o[k] === undefined) return `${path}.${k} is required.`;
+    // Own properties only, on both sides. A plain `obj[k]` lookup would find Object.prototype members, so keys such as
+    // "constructor", "toString" or "__proto__" (which JSON.parse creates as an own key) would match an inherited
+    // "sub-schema" with no constraints, and slip past additionalProperties: false. An inherited member would also
+    // count as a present `required` argument.
+    for (const k of schema.required || [])
+      if (!Object.hasOwn(o, k) || o[k] === undefined) return `${path}.${label(k)} is required.`;
     for (const [k, v] of Object.entries(o)) {
-      const sub = schema.properties?.[k];
+      const sub = schema.properties && Object.hasOwn(schema.properties, k) ? schema.properties[k] : undefined;
       if (sub) {
-        const e = check(v, sub, `${path}.${k}`);
+        const e = check(v, sub, `${path}.${label(k)}`);
         if (e) return e;
-      } else if (schema.additionalProperties === false) return `${path}.${k} isn't a known argument.`;
+      } else if (schema.additionalProperties === false) return `${path}.${label(k)} isn't a known argument.`;
     }
   }
   return null;

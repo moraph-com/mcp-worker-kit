@@ -1,5 +1,8 @@
-// A Worker under test: an in-memory database, the dev sign-in, and helpers that walk the OAuth flow the way an
-// assistant and a browser would.
+/**
+ * @file Test harness: a Worker under test with an in-memory D1 (`d1.ts`) and the development sign-in, plus helpers
+ * that walk the OAuth flow the way an assistant and a browser would. Every test drives the real `fetch` handler, so
+ * routing, headers and the database are exercised exactly as in production.
+ */
 import assert from 'node:assert/strict';
 import worker from '../src/index.ts';
 import type { Env } from '../src/env.ts';
@@ -9,6 +12,13 @@ import { createD1 } from './d1.ts';
 export const ORIGIN = 'http://localhost:8787';
 export const REDIRECT = 'https://assistant.example/callback';
 
+/**
+ * A fresh Worker and database. `call()` waits for everything handed to `waitUntil` (the audit writes) before
+ * returning, so a test can read the audit table straight after a request.
+ *
+ * @param vars - Environment settings. The default turns on the dev sign-in.
+ * @param opts.latency - Make every D1 call yield first, so concurrent requests interleave as they would against real D1.
+ */
 export function setup(vars: Partial<Env> = { DEV_LOGIN: '1' }, opts: { latency?: boolean } = {}) {
   const db = createD1(opts);
   const env = { DB: db as unknown as D1Database, ...vars } as Env;
@@ -34,12 +44,14 @@ export function setup(vars: Partial<Env> = { DEV_LOGIN: '1' }, opts: { latency?:
 }
 export type Kit = ReturnType<typeof setup>;
 
+/** A form-encoded POST, as OAuth token and revocation requests are sent. */
 export const form = (o: Record<string, string>) => ({
   method: 'POST',
   headers: { 'content-type': 'application/x-www-form-urlencoded' },
   body: new URLSearchParams(o).toString(),
 });
 
+/** Registers a client (one https redirect URI unless `extra` says otherwise) and asserts 201. */
 export async function registerClient(k: Kit, extra: Record<string, unknown> = {}) {
   const res = await k.call('/oauth/register', {
     method: 'POST',
@@ -50,6 +62,7 @@ export async function registerClient(k: Kit, extra: Record<string, unknown> = {}
   return (await res.json()) as { client_id: string; client_secret?: string };
 }
 
+/** A fresh PKCE verifier and its S256 challenge (RFC 7636 §4.1–4.2). */
 export async function pkce() {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
@@ -109,6 +122,7 @@ export async function authorizeFlow(
   return back.searchParams;
 }
 
+/** The token request for an authorization code, as a public client sends it. */
 export async function exchange(k: Kit, clientId: string, code: string, verifier: string) {
   return k.call(
     '/oauth/token',
@@ -134,6 +148,7 @@ export async function connect(k: Kit, opts: { write?: boolean; name?: string; ad
 }
 
 let nextId = 1;
+/** One JSON-RPC request. `body` is parsed JSON on a 200 and raw text otherwise. */
 export async function mcp(k: Kit, path: '/mcp' | '/public', method: string, params: unknown = {}, token?: string) {
   const res = await k.call(path, {
     method: 'POST',
@@ -146,5 +161,14 @@ export async function mcp(k: Kit, path: '/mcp' | '/public', method: string, para
     headers: res.headers,
   };
 }
+/** POST a raw JSON-RPC body (object or batch) to /public, with extra headers. */
+export const post = (k: Kit, body: unknown, headers: Record<string, string> = {}, path = '/public') =>
+  k.call(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+
+/** The names of the tools `tools/list` shows this caller, sorted. */
 export const toolNames = async (k: Kit, path: '/mcp' | '/public', token?: string) =>
   (await mcp(k, path, 'tools/list', {}, token)).body.result.tools.map((t: { name: string }) => t.name).sort();
