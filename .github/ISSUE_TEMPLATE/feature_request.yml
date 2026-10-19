@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest a change or addition.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem first, then the solution you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Does it change what an assistant can do?
+      description: The kit keeps reads by default, writes by consent, and consequential actions out of tools. Say how your change fits.

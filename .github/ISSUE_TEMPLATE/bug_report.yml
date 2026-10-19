@@ -1,0 +1,30 @@
+name: Bug report
+description: Something in the kit doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security problems don't go here.** Report them privately: see [SECURITY.md](https://github.com/moraph-com/mcp-worker-kit/blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce it
+      description: Requests and responses help most. Remove tokens, secrets and personal data first.
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client and protocol version
+      placeholder: e.g. Claude Code 2.x, MCP-Protocol-Version 2025-11-25
+  - type: input
+    id: version
+    attributes:
+      label: Kit version or commit

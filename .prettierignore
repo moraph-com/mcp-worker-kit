@@ -2,3 +2,4 @@ node_modules/
 .wrangler/
 dist/
 package-lock.json
+CODE_OF_CONDUCT.md
