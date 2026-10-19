@@ -2,7 +2,9 @@
 // person in this browser is, and the provider uses whatever sign-in you already have.
 //
 //   accessProvider   Cloudflare Access in front of /oauth/continue: verifies the Cf-Access-Jwt-Assertion JWT
-//                    (RS256, keys from the team's JWKS, audience, issuer, expiry). Production-ready.
+//                    (RS256, keys from the team's JWKS, audience, issuer, expiry). Production-ready. Roles come from
+//                    ADMIN_EMAILS as it is now, on every call; someone removed from Access keeps no connection longer
+//                    than GRANT_MAX_DAYS (config.ts), since only signing in again asks Access.
 //   devProvider      name-only sign-in for `wrangler dev`: on only when DEV_LOGIN=1 AND the host is localhost.
 //   noProvider       nothing configured: /public works; connecting to /mcp explains what to set up.
 //
@@ -50,11 +52,13 @@ export const noProvider: IdentityProvider = {
 type Jwk = JsonWebKey & { kid?: string };
 let jwksCache: { domain: string; at: number; keys: Jwk[] } | null = null;
 const JWKS_SECONDS = 600;
+/** An unknown kid refetches the keys (Access rotates them), but no more often than this, whatever tokens arrive. */
+const JWKS_REFETCH_SECONDS = 30;
 const SKEW_SECONDS = 60;
 
 async function accessKeys(domain: string, kid: string): Promise<Jwk | null> {
-  const fresh = jwksCache && jwksCache.domain === domain && Date.now() - jwksCache.at < JWKS_SECONDS * 1000;
-  if (!fresh || !jwksCache!.keys.some((k) => k.kid === kid)) {
+  const age = jwksCache && jwksCache.domain === domain ? Date.now() - jwksCache.at : Infinity;
+  if (age >= JWKS_SECONDS * 1000 || (!jwksCache!.keys.some((k) => k.kid === kid) && age >= JWKS_REFETCH_SECONDS * 1000)) {
     const res = await fetch(`https://${domain}/cdn-cgi/access/certs`);
     if (!res.ok) throw new Error(`Access JWKS: HTTP ${res.status}`);
     const body = (await res.json()) as { keys?: Jwk[] };
@@ -92,6 +96,11 @@ export async function verifyAccessJwt(token: string, env: Env, now = Date.now())
   }
 }
 
+const accessRoles = (email: string | null | undefined, env: Env) => {
+  const admins = String(env.ADMIN_EMAILS || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+  return email && admins.includes(email.toLowerCase()) ? ['admin'] : [];
+};
+
 export const accessProvider: IdentityProvider = {
   name: 'cloudflare-access',
   async currentUser(request, env) {
@@ -100,8 +109,13 @@ export const accessProvider: IdentityProvider = {
     const c = await verifyAccessJwt(token, env);
     if (!c) return null;
     const email = typeof c.email === 'string' ? c.email.toLowerCase() : null;
-    const admins = String(env.ADMIN_EMAILS || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
-    return { id: `access:${c.sub}`, name: email || String(c.sub), email, roles: email && admins.includes(email) ? ['admin'] : [] };
+    return { id: `access:${c.sub}`, name: email || String(c.sub), email, roles: accessRoles(email, env) };
+  },
+  // Every tool call: the person must not be disabled here, and their roles follow ADMIN_EMAILS as it is now, not as
+  // it was when they connected.
+  async lookupUser(id, env) {
+    const u = await one<{ id: string; name: string; email: string | null }>(env, 'SELECT id, name, email FROM users WHERE id = ? AND disabled_at IS NULL', id);
+    return u ? { id: u.id, name: u.name, email: u.email, roles: accessRoles(u.email, env) } : null;
   },
   // Access protects /oauth/continue itself, so a request that reaches the Worker without a token means Access isn't
   // set up on that path. There's nowhere useful to send the person.

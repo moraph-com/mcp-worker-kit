@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import type { IdentityProvider } from '../src/identity.ts';
+import { continueAuth } from '../src/oauth.ts';
 import { ORIGIN, REDIRECT, authorizeFlow, connect, exchange, form, mcp, pkce, registerClient, setup } from './helpers.ts';
 
 describe('metadata', () => {
@@ -267,5 +269,123 @@ describe('daily clean-up', () => {
     await Promise.all(waits);
     assert.equal(k.rows('SELECT * FROM oauth_tokens').length, 0);
     assert.equal(k.rows("SELECT * FROM tool_calls WHERE tool = 'old'").length, 0);
+  });
+});
+
+describe('races and lifetimes', () => {
+  const refresh = (k: ReturnType<typeof setup>, clientId: string, token: string) =>
+    k.call('/oauth/token', form({ grant_type: 'refresh_token', client_id: clientId, refresh_token: token }));
+
+  it('lets only one of two concurrent refreshes win, and ends the connection', async () => {
+    const k = setup(undefined, { latency: true });
+    const t = await connect(k);
+    const both = await Promise.all([refresh(k, t.clientId, t.refresh_token), refresh(k, t.clientId, t.refresh_token)]);
+    assert.deepEqual(both.map((r) => r.status).sort(), [200, 400]);
+    const winner = (await both.find((r) => r.status === 200)!.json()) as any;
+    assert.equal((await mcp(k, '/mcp', 'ping', {}, winner.access_token)).status, 401, 'the race counts as reuse');
+    assert.equal(k.rows('SELECT revoked_by FROM oauth_grants')[0].revoked_by, 'refresh_reuse');
+  });
+
+  it('lets only one of two concurrent code exchanges win', async () => {
+    const k = setup(undefined, { latency: true });
+    const c = await registerClient(k);
+    const { verifier, challenge } = await pkce();
+    const code = (await authorizeFlow(k, c.client_id, challenge)).get('code')!;
+    const both = await Promise.all([exchange(k, c.client_id, code, verifier), exchange(k, c.client_id, code, verifier)]);
+    const ok = both.filter((r) => r.status === 200);
+    assert.ok(ok.length <= 1);
+    for (const r of ok) assert.equal((await mcp(k, '/mcp', 'ping', {}, ((await r.json()) as any).access_token)).status, 401);
+  });
+
+  it('ends a connection at GRANT_MAX_DAYS however often it is refreshed', async () => {
+    const k = setup();
+    const t = await connect(k);
+    k.db.sqlite.exec("UPDATE oauth_grants SET created_at = datetime('now', '-31 days')");
+    assert.equal((await mcp(k, '/mcp', 'ping', {}, t.access_token)).status, 401);
+    const res = await refresh(k, t.clientId, t.refresh_token);
+    assert.equal(res.status, 400);
+    assert.match(((await res.json()) as any).error_description, /time limit/);
+  });
+
+  it("never issues a token that outlives the grant's limit", async () => {
+    const k = setup();
+    const t = await connect(k);
+    k.db.sqlite.exec("UPDATE oauth_grants SET created_at = datetime('now', '-30 days', '+10 minutes')");
+    const n = (await (await refresh(k, t.clientId, t.refresh_token)).json()) as any;
+    assert.ok(n.expires_in <= 600, `access token lasts ${n.expires_in}s`);
+    const [{ latest }] = k.rows("SELECT MAX(expires_at) AS latest FROM oauth_tokens WHERE kind = 'refresh' AND used_at IS NULL");
+    assert.ok(String(latest) <= String(k.rows("SELECT datetime(created_at, '+30 days') AS e FROM oauth_grants")[0].e));
+  });
+});
+
+describe('spec details', () => {
+  it('accepts a loopback redirect on any port (RFC 8252), but not another path or host', async () => {
+    const k = setup();
+    const c = await registerClient(k, { redirect_uris: ['http://127.0.0.1/callback'] });
+    const { challenge } = await pkce();
+    const go = (redirect_uri: string) => k.call(`/oauth/authorize?${new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri, code_challenge: challenge, code_challenge_method: 'S256' })}`);
+    assert.equal((await go('http://127.0.0.1:49152/callback')).status, 302);
+    assert.equal((await go('http://127.0.0.1:49152/other')).status, 400);
+    assert.equal((await go('http://localhost:49152/callback')).status, 400);
+  });
+
+  it('refuses a token request for another resource (RFC 8707)', async () => {
+    const k = setup();
+    const c = await registerClient(k);
+    const { verifier, challenge } = await pkce();
+    const code = (await authorizeFlow(k, c.client_id, challenge)).get('code')!;
+    const res = await k.call('/oauth/token', form({ grant_type: 'authorization_code', client_id: c.client_id, code, code_verifier: verifier, resource: 'https://other.example/mcp' }));
+    assert.equal(((await res.json()) as any).error, 'invalid_target');
+  });
+
+  it('says error="invalid_token" when a token was sent but is no good', async () => {
+    const k = setup();
+    const r = await mcp(k, '/mcp', 'ping', {}, `mcpat_${'0'.repeat(64)}`);
+    assert.equal(r.status, 401);
+    assert.match(r.headers.get('www-authenticate')!, /error="invalid_token"/);
+    assert.doesNotMatch((await mcp(k, '/mcp', 'ping')).headers.get('www-authenticate')!, /error=/);
+  });
+
+  it('refuses oversized registration and token bodies without reading them whole', async () => {
+    const k = setup();
+    const big = JSON.stringify({ redirect_uris: [REDIRECT], client_name: 'x'.repeat(20000) });
+    assert.equal((await k.call('/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: big })).status, 413);
+    const t = await k.call('/oauth/token', form({ grant_type: 'refresh_token', pad: 'x'.repeat(20000) }));
+    assert.equal(t.status, 400);
+  });
+
+  it('refuses consent for a disabled person, whatever the identity provider says', async () => {
+    const k = setup();
+    await connect(k, { name: 'Alice' });
+    k.db.sqlite.exec("UPDATE users SET disabled_at = datetime('now')");
+    const c = await registerClient(k);
+    const { challenge } = await pkce();
+    const a = await k.call(`/oauth/authorize?${new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' })}`);
+    // A provider (like Access) that still vouches for the person: the users table has the last word.
+    const idp: IdentityProvider = { name: 'test', currentUser: async () => ({ id: 'dev:alice', name: 'Alice', roles: [] }), loginUrl: () => null };
+    const url = new URL(a.headers.get('location')!, ORIGIN);
+    const res = await continueAuth(new Request(url, { headers: { cookie: a.headers.getSetCookie()[0].split(';')[0] } }), k.env, url, idp);
+    assert.equal(res.status, 403);
+  });
+
+  it('survives a malformed cookie from another app on the same host', async () => {
+    const k = setup();
+    const res = await k.call(`/oauth/continue?req=${'a'.repeat(32)}`, { headers: { cookie: 'other=%E0%A4%A' } });
+    assert.equal(res.status, 400);
+  });
+});
+
+describe('client clean-up', () => {
+  it('removes old clients that never connected, and keeps the rest', async () => {
+    const k = setup();
+    const used = await connect(k);
+    const unused = await registerClient(k);
+    const fresh = await registerClient(k);
+    k.db.sqlite.exec(`UPDATE oauth_clients SET created_at = '2000-01-01 00:00:00' WHERE id IN ('${used.clientId}', '${unused.client_id}')`);
+    const { default: worker } = await import('../src/index.ts');
+    const waits: Promise<unknown>[] = [];
+    await worker.scheduled({} as ScheduledController, k.env, { waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as ExecutionContext);
+    await Promise.all(waits);
+    assert.deepEqual(k.rows('SELECT id FROM oauth_clients ORDER BY id').map((r) => r.id).sort(), [used.clientId, fresh.client_id].sort());
   });
 });

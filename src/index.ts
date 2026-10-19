@@ -35,7 +35,7 @@ export default {
     if (p === '/mcp') {
       if (request.method !== 'POST') return rpc(request, env, ctx, url, null, new Set(), null);
       const auth = await oauth.authenticate(request, env, idp);
-      if ('error' in auth) return oauth.unauthorized(url, auth.error === 'missing' ? 'Sign in to connect.' : 'Your connection has expired or was revoked. Connect again.');
+      if ('error' in auth) return auth.error === 'missing' ? oauth.unauthorized(url, 'Sign in to connect.') : oauth.unauthorized(url, 'Your connection has expired or was revoked. Connect again.', true);
       return rpc(request, env, ctx, url, auth.user, auth.scopes, auth.grant);
     }
     if (p === '/' && request.method === 'GET') return infoPage(url);

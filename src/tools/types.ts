@@ -3,11 +3,14 @@
 //   access   'public'      anyone, including the unauthenticated /public endpoint
 //            'signed_in'   anyone connected through /mcp
 //            (user) => boolean   your own rule, e.g. (u) => u.roles.includes('admin')
-//   write    true for tools that change something: hidden from connections that weren't allowed the write scope
+//   write    true for tools that change something: hidden from signed-in connections that weren't allowed the write
+//            scope. A write tool with access 'public' (a contact form, say) is offered on /public, where nobody signs in.
+//   inputSchema  checked before run (validate.ts): run only sees arguments that fit it
 //   run      returns structured data (sent as JSON text and structuredContent); throw ToolError for a message the
 //            assistant should see. Any other error becomes a generic message and is logged.
 import type { Env } from '../env.ts';
 import type { User } from '../identity.ts';
+import type { Schema } from './validate.ts';
 
 export interface ToolContext {
   env: Env;
@@ -24,7 +27,7 @@ export interface Tool {
   name: string;
   title: string;
   description: string;
-  inputSchema: { type: 'object'; properties?: Record<string, unknown>; required?: string[]; additionalProperties?: boolean };
+  inputSchema: Schema & { type: 'object' };
   annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
   access: 'public' | 'signed_in' | ((user: User) => boolean);
   write?: boolean;

@@ -16,9 +16,11 @@ data taken out.
   sign-in who the person is. Cloudflare Access is built in.
 - **Read by default, write by consent.** People always grant `read`. `write` is a separate checkbox on the consent screen, and
   read-only connections never see write tools.
-- **Every call recorded, never its contents.** `tool_calls` keeps who, which tool, the outcome and the time taken. It never
-  stores arguments or results.
-- **Small and dependency-free.** TypeScript, D1 and no runtime dependencies, in under 1,000 lines.
+- **Arguments checked before tools run.** Each tool's `inputSchema` is enforced, so a tool only ever sees arguments that
+  fit it. Mistakes go back to the assistant as a message it can act on.
+- **Every call recorded, never its contents.** `tool_calls` keeps who, which tool, the outcome and the time taken,
+  refusals included. It never stores arguments or results.
+- **Small and dependency-free.** TypeScript, D1 and no runtime dependencies, in about 1,100 lines.
 
 ## Deploy in about a minute
 
@@ -86,7 +88,7 @@ sequenceDiagram
 | `src/mcp.ts` | JSON-RPC over Streamable HTTP (stateless JSON), `toolsFor()`, the audit record |
 | `src/oauth.ts` | The authorization server and `authenticate()` |
 | `src/identity.ts` | `IdentityProvider`, Cloudflare Access, the development sign-in |
-| `src/tools/` | Tool type, example tools, the tool list |
+| `src/tools/` | Tool type, argument checking (`validate.ts`), example tools, the tool list |
 | `src/config.ts` | Server name, scopes, instructions sent to assistants, lifetimes |
 | `migrations/0001_init.sql` | Tables, with what each column is for |
 
@@ -95,16 +97,25 @@ sequenceDiagram
 - **Secrets are stored hashed.** Client secrets, authorization codes, access and refresh tokens, and dev sessions are
   stored as SHA-256 only. A database leak doesn't hand out working tokens.
 - **Codes and refresh tokens are single-use.** Codes last 5 minutes. If a code or refresh token is used twice, the
-  server assumes it leaked and revokes the whole connection.
+  server assumes it leaked and revokes the whole connection. "Used" is claimed with a conditional update, so two
+  requests racing with the same token can't both win.
 - **Access is checked on every call, not once.** Each request re-checks the token, the grant and the person
-  (`users.disabled_at`, or your provider's `lookupUser`). Disabling someone stops all their assistants at once.
+  (`users.disabled_at`, or your provider's `lookupUser`), and the person's roles as they are now. Disabling someone
+  stops all their assistants at once.
+- **Connections end.** A connection lasts at most `GRANT_MAX_DAYS` (30) however often it's refreshed, and then the person
+  signs in through your identity provider again. Someone removed from your sign-in loses their assistants within that
+  time, even when the provider can't be asked directly (Cloudflare Access can't).
 - **The consent step is tied to one browser.** An authorization request only continues in the browser that started
   it (an `HttpOnly`, `__Host-` cookie). The approval form checks `Origin`.
-- **Redirects are strict.** Redirect URIs must be registered exactly. They can be https, loopback http or a
-  desktop-app scheme, never `javascript:`, `data:` or fragments. Registration is rate-limited per network.
+- **Redirects are strict.** Redirect URIs must match a registered one exactly. The one exception is the port of a
+  loopback http URI, which native apps choose at run time (RFC 8252). URIs can be https, loopback http or a desktop-app
+  scheme, never `javascript:`, `data:` or fragments. Registration is rate-limited per network. Clients that never
+  connect are removed after 30 days.
 - **HTML pages have strict headers.** There are no scripts at all. The policy is `default-src 'none'`, the one inline
   stylesheet is allowed by hash, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `no-store`, and `form-action` is
   limited to this site and the assistant's own return address.
+- **Requests are bounded.** Bodies are capped (64 KB for MCP, 16 KB for OAuth) and counted in bytes as they're read,
+  so an oversized request is never held in memory.
 - **Calls are audited without their contents.** `tool_calls` is kept for 13 months, and the cron job deletes expired
   rows daily.
 
@@ -125,7 +136,7 @@ The pattern this kit is built for:
 
 | Setting | Provider |
 | --- | --- |
-| `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` | **Cloudflare Access.** Create an Access application covering `https://<your-host>/oauth/continue` (only that path). The Worker verifies the `Cf-Access-Jwt-Assertion` JWT: RS256 signature against your team's keys, audience, issuer and expiry. `ADMIN_EMAILS` gives listed people the `admin` role. |
+| `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` | **Cloudflare Access.** Create an Access application covering `https://<your-host>/oauth/continue` (only that path). The Worker verifies the `Cf-Access-Jwt-Assertion` JWT: RS256 signature against your team's keys, audience, issuer and expiry. `ADMIN_EMAILS` gives listed people the `admin` role, re-read on every call. Access is only asked at sign-in, so `GRANT_MAX_DAYS` decides how long a connection outlives someone's removal from Access. |
 | `DEV_LOGIN=1` (localhost only) | **Development** name-only sign-in |
 | nothing | **None.** `/public` works, and connecting to `/mcp` explains that sign-in isn't set up |
 
@@ -166,8 +177,12 @@ A tool is an object in `src/tools/` added to `TOOLS` in `src/tools/index.ts`:
 }
 ```
 
-- `access` decides who sees the tool. `write: true` also hides it from connections without the `write` scope.
-  `toolsFor()` in `src/mcp.ts` is the only place that decision is made, and `tools/call` uses the same check.
+- `access` decides who sees the tool. `write: true` also hides it from signed-in connections without the `write`
+  scope. `toolsFor()` in `src/mcp.ts` is the only place that decision is made, and `tools/call` uses the same check.
+  (A write tool with `access: 'public'` is offered on `/public`: use that only for things like a contact form.)
+- `inputSchema` is enforced before `run` (`src/tools/validate.ts`): types, `required`, `additionalProperties: false`,
+  `enum`, lengths, ranges and array items. Other keywords such as `format` and `pattern` are passed to clients but not
+  checked, so check those in `run` if they matter.
 - Throw `ToolError` (or call `fail('…')`) for a message the assistant should pass on. Any other error becomes a generic
   message, and the details go to the Worker's logs, not to the assistant.
 - Scope every query to `c.user`. The tool runs as the person, so it should see what they see and nothing more.
@@ -180,13 +195,18 @@ npm run typecheck
 ```
 
 The tests walk the real flows: registration rules, the full PKCE flow, the wrong verifier, code reuse, refresh rotation
-and reuse detection, revocation, scope filtering, refusals, the audit trail, Access JWT verification (including tampered,
-expired and wrong-audience tokens) and the dev sign-in's localhost lock.
+and reuse detection (including two requests racing, with simulated D1 latency), grant lifetimes, revocation, scope
+filtering, refusals, argument checking, protocol versions, the audit trail, Access JWT verification (including
+tampered, expired and wrong-audience tokens) and the dev sign-in's localhost lock.
 
 ## Limits
 
 - Stateless JSON responses only. There's no SSE stream, server-to-client requests or resumable sessions. Tools and
   results cover most uses of a remote server. Add a Durable Object if you need sessions.
+- The `MCP-Protocol-Version` header is checked on every request: an unknown version gets 400. JSON-RPC batches are
+  accepted only for protocol versions before 2025-06-18, which removed them.
+- Clients connect through dynamic client registration. Client ID Metadata Documents, which MCP 2025-11-25 also
+  describes, aren't supported yet.
 - `resources` and `prompts` answer with empty lists.
 - Registration is open to any client (that's how MCP clients connect), so the per-network limit is the main protection.
   Put Cloudflare WAF rate limiting in front if you expect abuse.

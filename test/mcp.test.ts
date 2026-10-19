@@ -171,3 +171,84 @@ describe('audit trail', () => {
     assert.deepEqual(call, { ok: 0, error: 'A note needs some text.' });
   });
 });
+
+describe('protocol version header', () => {
+  const post = (k: ReturnType<typeof setup>, body: unknown, version?: string) =>
+    k.call('/public', { method: 'POST', headers: { 'content-type': 'application/json', ...(version ? { 'mcp-protocol-version': version } : {}) }, body: JSON.stringify(body) });
+
+  it('answers an unsupported MCP-Protocol-Version with 400', async () => {
+    const k = setup();
+    assert.equal((await post(k, { jsonrpc: '2.0', id: 1, method: 'ping' }, '1999-01-01')).status, 400);
+    assert.equal((await post(k, { jsonrpc: '2.0', id: 1, method: 'ping' }, '2025-11-25')).status, 200);
+  });
+
+  it('refuses batches from 2025-06-18 on, and accepts them before', async () => {
+    const k = setup();
+    const batch = [{ jsonrpc: '2.0', id: 1, method: 'ping' }];
+    assert.equal((await post(k, batch, '2025-06-18')).status, 400);
+    assert.equal((await post(k, batch, '2025-11-25')).status, 400);
+    assert.equal((await post(k, batch, '2025-03-26')).status, 200);
+    assert.equal((await post(k, batch)).status, 200, 'no header means 2025-03-26');
+  });
+
+  it('answers a client response (to a server request) with 202', async () => {
+    const k = setup();
+    const res = await post(k, { jsonrpc: '2.0', id: 'srv-1', result: {} }, '2025-11-25');
+    assert.equal(res.status, 202);
+  });
+
+  it('measures the body limit in bytes, not characters', async () => {
+    const k = setup();
+    const res = await post(k, { jsonrpc: '2.0', id: 1, method: 'ping', pad: 'é'.repeat(40000) });
+    assert.equal(res.status, 413);
+  });
+});
+
+describe('argument checking', () => {
+  it('returns schema problems as a tool error the assistant can fix, before the tool runs', async () => {
+    const k = setup();
+    const t = await connect(k, { write: true });
+    const cases: [Record<string, unknown>, RegExp][] = [
+      [{ title: 'x' }, /arguments\.body is required/],
+      [{ title: { nested: true }, body: 'y' }, /arguments\.title must be string, not object/],
+      [{ title: 'x', body: 'y', colour: 'red' }, /arguments\.colour isn't a known argument/],
+      [{ title: 'x'.repeat(121), body: 'y' }, /at most 120 characters/],
+    ];
+    for (const [args, why] of cases) {
+      const r = await mcp(k, '/mcp', 'tools/call', { name: 'create_note', arguments: args }, t.access_token);
+      assert.equal(r.body.result.isError, true);
+      assert.match(r.body.result.content[0].text, why);
+    }
+    assert.equal(k.rows('SELECT * FROM notes WHERE owner_id IS NOT NULL').length, 0);
+    const lim = await mcp(k, '/public', 'tools/call', { name: 'search_notes', arguments: { limit: 500 } });
+    assert.match(lim.body.result.content[0].text, /at most 50/);
+  });
+
+  it('refuses arguments that are not an object with -32602', async () => {
+    const k = setup();
+    const r = await mcp(k, '/public', 'tools/call', { name: 'server_time', arguments: ['x'] });
+    assert.equal(r.body.error.code, -32602);
+  });
+
+  it('treats % and _ in a search as plain characters', async () => {
+    const k = setup();
+    const r = await mcp(k, '/public', 'tools/call', { name: 'search_notes', arguments: { query: '%' } });
+    assert.equal(r.body.result.structuredContent.notes.length, 0);
+  });
+});
+
+describe('audit of refusals', () => {
+  it('records refused calls too', async () => {
+    const k = setup();
+    const t = await connect(k, { write: false });
+    await mcp(k, '/public', 'tools/call', { name: 'create_note', arguments: {} });
+    await mcp(k, '/mcp', 'tools/call', { name: 'create_note', arguments: { title: 'x', body: 'y' } }, t.access_token);
+    await mcp(k, '/mcp', 'tools/call', { name: 'audit_log', arguments: {} }, t.access_token);
+    const calls = k.rows('SELECT tool, user_id, ok, error FROM tool_calls ORDER BY id');
+    assert.equal(calls.length, 3);
+    assert.ok(calls.every((c) => c.ok === 0));
+    assert.equal(calls[0].user_id, null);
+    assert.match(String(calls[1].error), /read-only/);
+    assert.match(String(calls[2].error), /isn’t available/);
+  });
+});

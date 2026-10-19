@@ -62,6 +62,22 @@ describe('Cloudflare Access sign-in', () => {
     assert.equal(await verifyAccessJwt(await sign(good(), 'k1', other.privateKey), env), null);
   });
 
+  it('refetches keys for an unknown kid at most every 30 seconds', async () => {
+    assert.ok(await verifyAccessJwt(await sign(good()), env));
+    for (let i = 0; i < 5; i++) assert.equal(await verifyAccessJwt(await sign(good(), `random-${i}`), env), null);
+    assert.equal(fetches, 1);
+  });
+
+  it('re-derives roles on every call, so removing someone from ADMIN_EMAILS takes effect at once', async () => {
+    const db = createD1();
+    const e = { ...env, DB: db as unknown as D1Database } as Env;
+    db.sqlite.exec("INSERT INTO users (id, name, email, roles) VALUES ('access:user-1', 'boss@example.com', 'boss@example.com', '[\"admin\"]')");
+    assert.deepEqual((await accessProvider.lookupUser!('access:user-1', e))?.roles, ['admin']);
+    assert.deepEqual((await accessProvider.lookupUser!('access:user-1', { ...e, ADMIN_EMAILS: '' }))?.roles, []);
+    db.sqlite.exec("UPDATE users SET disabled_at = datetime('now')");
+    assert.equal(await accessProvider.lookupUser!('access:user-1', e), null);
+  });
+
   it('maps the person and the admin role from ADMIN_EMAILS', async () => {
     const req = new Request('https://mcp.example/oauth/continue', { headers: { 'cf-access-jwt-assertion': await sign(good()) } });
     const u = await accessProvider.currentUser(req, env, new URL(req.url));
@@ -83,11 +99,13 @@ describe('development sign-in', () => {
     assert.equal(res.status, 404);
   });
 
-  it('only redirects to paths on this site after sign-in', async () => {
-    const k = setup();
-    const res = await k.call('/dev/login?next=//evil.example/x', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'http://localhost:8787' }, body: 'name=Alice' });
-    assert.equal(res.headers.get('location'), '/');
-  });
+  for (const next of ['//evil.example/x', '/\t/evil.example', '/\\evil.example', '/%0a/x\n']) {
+    it(`only redirects to paths on this site after sign-in (${JSON.stringify(next)})`, async () => {
+      const k = setup();
+      const res = await k.call(`/dev/login?next=${encodeURIComponent(next)}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'http://localhost:8787' }, body: 'name=Alice' });
+      assert.equal(new URL(res.headers.get('location')!, 'http://localhost:8787').host, 'localhost:8787');
+    });
+  }
 });
 
 describe('no sign-in configured', () => {

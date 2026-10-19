@@ -27,8 +27,9 @@ export const EXAMPLE_TOOLS: Tool[] = [
     access: 'public',
     async run(c, args) {
       const words = str(args.query, 200).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
-      const like = words.map(() => '(lower(title) LIKE ? OR lower(body) LIKE ?)').join(' AND ');
-      const binds = words.flatMap((w) => [`%${w}%`, `%${w}%`]);
+      // % and _ in what the person typed are literal characters, not wildcards.
+      const like = words.map(() => "(lower(title) LIKE ? ESCAPE '\\' OR lower(body) LIKE ? ESCAPE '\\')").join(' AND ');
+      const binds = words.map((w) => `%${w.replace(/[\\%_]/g, '\\$&')}%`).flatMap((p) => [p, p]);
       const notes = await all(c.env, `SELECT id, title, body, created_at, owner_id IS NOT NULL AS private FROM notes
         WHERE (owner_id IS NULL OR owner_id = ?)${like ? ` AND ${like}` : ''} ORDER BY created_at DESC, id LIMIT ?`,
         c.user?.id ?? '', ...binds, lim(args.limit));

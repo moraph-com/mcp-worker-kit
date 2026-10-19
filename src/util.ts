@@ -24,7 +24,9 @@ export function parseCookies(request: Request): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of (request.headers.get('cookie') || '').split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i <= 0) continue;
+    const v = part.slice(i + 1).trim();
+    try { out[part.slice(0, i).trim()] = decodeURIComponent(v); } catch { out[part.slice(0, i).trim()] = v; } // another app's cookie
   }
   return out;
 }
@@ -36,11 +38,38 @@ export function sameOrigin(request: Request): boolean {
   return request.headers.get('sec-fetch-site') === 'same-origin';
 }
 
-/** A path on this site to return to after signing in: relative, never another host. */
+/**
+ * A path on this site to return to after signing in: relative, never another host. Control characters and
+ * backslashes are refused outright: browsers drop tabs and newlines and read \ as /, so "/\t/evil" means "//evil".
+ */
 export const safeNext = (next: unknown) => {
   const s = String(next || '/');
-  return s.startsWith('/') && !s.startsWith('//') && !s.startsWith('/\\') ? s.slice(0, 500) : '/';
+  return s.startsWith('/') && !s.startsWith('//') && !/[\u0000-\u001f\u007f\\]/.test(s) ? s.slice(0, 500) : '/';
 };
+
+/**
+ * The request body as text, at most `max` bytes, or null if it's bigger. Checks Content-Length first and counts bytes
+ * while reading, so an oversized body is never held in memory.
+ */
+export async function readBody(request: Request, max: number): Promise<string | null> {
+  const declared = Number(request.headers.get('content-length'));
+  if (declared > max) return null;
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) { await reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) { all.set(c, at); at += c.byteLength; }
+  return new TextDecoder().decode(all);
+}
 
 export const ipHash = async (request: Request, env: Env) => sha256(`${env.IP_SALT || ''}:${request.headers.get('cf-connecting-ip') || 'unknown'}`);
 

@@ -9,8 +9,8 @@ import { createD1 } from './d1.ts';
 export const ORIGIN = 'http://localhost:8787';
 export const REDIRECT = 'https://assistant.example/callback';
 
-export function setup(vars: Partial<Env> = { DEV_LOGIN: '1' }) {
-  const db = createD1();
+export function setup(vars: Partial<Env> = { DEV_LOGIN: '1' }, opts: { latency?: boolean } = {}) {
+  const db = createD1(opts);
   const env = { DB: db as unknown as D1Database, ...vars } as Env;
   const pending: Promise<unknown>[] = [];
   const ctx = { waitUntil: (p: Promise<unknown>) => { pending.push(p); }, passThroughOnException() {}, props: {} } as unknown as ExecutionContext;

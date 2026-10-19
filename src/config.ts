@@ -21,9 +21,16 @@ export function instructions(who: string | null): string {
 
 export const ACCESS_SECONDS = 3600;
 export const REFRESH_DAYS = 30;
+/**
+ * The longest a connection lasts, however often it's refreshed. Then the person signs in again through your identity
+ * provider, so someone removed there loses their assistants within this time even if the provider can't be asked.
+ */
+export const GRANT_MAX_DAYS = 30;
 export const CODE_SECONDS = 300;
 export const REQUEST_MINUTES = 15;
 /** Dynamic client registrations allowed per network per hour. */
 export const REGISTRATIONS_PER_HOUR = 30;
 /** How long tool-call records are kept. */
 export const AUDIT_DAYS = 395;
+/** Registered clients with no connection are removed after this many days. */
+export const UNUSED_CLIENT_DAYS = 30;
