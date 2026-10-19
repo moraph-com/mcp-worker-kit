@@ -3,7 +3,9 @@
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] - Unreleased
+## [Unreleased]
+
+## [0.1.0] - 2026-10-19
 
 First public release.
 
@@ -35,3 +37,6 @@ First public release.
 - Example tools: `server_time`, `search_notes`, `create_note`, `audit_log`, `my_connections` and `revoke_connection`.
 - Tooling: TypeScript type checks, ESLint (typescript-eslint, type-aware), Prettier, `node:test` suite against an
   in-memory D1, CI on Node 22 and 24 with SHA-pinned actions, Dependabot, issue and PR templates, Code of Conduct.
+
+[Unreleased]: https://github.com/moraph-com/mcp-worker-kit/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/moraph-com/mcp-worker-kit/releases/tag/v0.1.0
