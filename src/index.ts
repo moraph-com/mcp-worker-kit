@@ -38,6 +38,7 @@ async function withinRateLimit(request: Request, env: Env): Promise<boolean> {
   return (await env.RATE_LIMITER.limit({ key: network(ip) })).success;
 }
 
+/** The Worker: `fetch` for HTTP requests, `scheduled` for the daily cron. */
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);

@@ -307,7 +307,7 @@ const b64 = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf
  * @param body - HTML. **The caller escapes every interpolated value with `esc`.**
  * @param status - HTTP status.
  * @param formTargets - Extra `form-action` sources. The consent form posts to this site, which then redirects to the
- *   assistant's address, and browsers apply `form-action` to that redirect too (CSP Level 3 §6.4.1).
+ *   assistant's address, and browsers apply `form-action` to that redirect too (CSP Level 3, `form-action`).
  */
 export async function page(title: string, body: string, status = 200, formTargets: string[] = []): Promise<Response> {
   styleHash ??= crypto.subtle.digest('SHA-256', enc.encode(STYLE)).then(b64);

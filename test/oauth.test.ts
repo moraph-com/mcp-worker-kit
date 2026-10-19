@@ -180,6 +180,7 @@ describe('authorization code with PKCE', () => {
     assert.equal(((await res.json()) as any).error_description, 'PKCE verification failed.');
   });
 
+  // RFC 6749 §4.1.2: a replayed code means it leaked, so every token issued from it is revoked too.
   it('revokes the grant when a code is used twice', async () => {
     const k = setup();
     const c = await registerClient(k);
@@ -268,6 +269,7 @@ describe('authorization code with PKCE', () => {
     assert.equal(res.headers.get('cache-control'), 'no-store');
   });
 
+  // Consent CSRF: a link to /oauth/continue sent to someone else must not let them approve the attacker's request.
   it('only continues in the browser that started the request', async () => {
     const k = setup();
     const c = await registerClient(k);
@@ -300,6 +302,7 @@ describe('refresh tokens', () => {
     assert.equal((await mcp(k, '/mcp', 'ping', {}, t.access_token)).status, 401);
   });
 
+  // RFC 9700 §4.14.2: either the client or a thief holds a used token; ending the grant stops whichever is the thief.
   it('treats reuse of a rotated refresh token as theft and ends the connection', async () => {
     const k = setup();
     const t = await connect(k);
@@ -461,6 +464,7 @@ describe('spec details', () => {
     assert.equal(t.status, 400);
   });
 
+  // Access can't be told that someone was disabled here, so the users table must be able to overrule it.
   it('refuses consent for a disabled person, whatever the identity provider says', async () => {
     const k = setup();
     await connect(k, { name: 'Alice' });

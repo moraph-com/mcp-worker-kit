@@ -71,6 +71,8 @@ describe('Cloudflare Access sign-in', () => {
     assert.equal(fetches, 1);
   });
 
+  // Each case changes one thing about an otherwise valid token. The last two are the classic algorithm attacks: "none"
+  // (no signature at all) and HS256 keyed with the RSA public key, which anyone can fetch (RFC 8725 §2.1).
   const cases: [string, () => Promise<string>][] = [
     ['the wrong audience', () => sign(good({ aud: ['someone-else'] }))],
     ['the wrong issuer', () => sign(good({ iss: 'https://evil.cloudflareaccess.com' }))],
@@ -88,6 +90,21 @@ describe('Cloudflare Access sign-in', () => {
       'alg none',
       async () =>
         `${b64url(new TextEncoder().encode('{"alg":"none","kid":"k1"}'))}.${b64url(new TextEncoder().encode(JSON.stringify(good())))}.`,
+    ],
+    [
+      'HS256 signed with the public key',
+      async () => {
+        const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)));
+        const head = `${enc({ alg: 'HS256', kid: 'k1', typ: 'JWT' })}.${enc(good())}`;
+        const hmac = await crypto.subtle.importKey(
+          'raw',
+          new TextEncoder().encode(JSON.stringify(jwk)),
+          { name: 'HMAC', hash: 'SHA-256' },
+          false,
+          ['sign'],
+        );
+        return `${head}.${b64url(await crypto.subtle.sign('HMAC', hmac, new TextEncoder().encode(head)))}`;
+      },
     ],
   ];
   for (const [what, token] of cases) {
@@ -112,6 +129,7 @@ describe('Cloudflare Access sign-in', () => {
     assert.equal(fetches, 1);
   });
 
+  // Roles are never trusted from the time of consent: lookupUser recomputes them on every request.
   it('re-derives roles on every call, so removing someone from ADMIN_EMAILS takes effect at once', async () => {
     const db = createD1();
     const e = { ...env, DB: db as unknown as D1Database } as Env;
@@ -148,6 +166,7 @@ describe('development sign-in', () => {
     assert.equal((await k.call('/dev/login')).status, 404);
   });
 
+  // A DEV_LOGIN=1 copied into production by mistake must still do nothing.
   it('is off on any host but localhost, even with DEV_LOGIN=1', async () => {
     const db = createD1();
     const e = { DB: db as unknown as D1Database, DEV_LOGIN: '1' } as Env;

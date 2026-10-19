@@ -14,6 +14,7 @@ import { liveConnections, revokeGrant } from '../oauth.ts';
 import { all, one, q, randomId } from '../util.ts';
 import { fail, lim, str, type Tool } from './types.ts';
 
+/** Demo tools over the `notes` table, plus an admin-only view of the audit trail. */
 export const EXAMPLE_TOOLS: Tool[] = [
   {
     name: 'server_time',

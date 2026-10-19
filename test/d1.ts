@@ -1,5 +1,8 @@
-// A small D1 stand-in over node:sqlite, enough for these tests: prepare/bind/first/all/run/raw and batch (in one
-// transaction, as D1 runs it). Migrations are applied from migrations/ in order.
+/**
+ * @file A small D1 stand-in over `node:sqlite`, enough for these tests: `prepare`/`bind`/`first`/`all`/`run`/`raw`,
+ * and `batch` run in one transaction, as D1 runs it. D1 is SQLite, so the real migrations apply unchanged, from
+ * `migrations/` in order. The tests therefore exercise the real schema, constraints and SQL.
+ */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
@@ -58,6 +61,7 @@ class Statement {
   }
 }
 
+/** A fresh in-memory database with every migration applied. `latency` makes each call yield first (see `tick`). */
 export function createD1(opts: { latency?: boolean } = {}) {
   const db = new DatabaseSync(':memory:');
   const dir = join(import.meta.dirname, '..', 'migrations');

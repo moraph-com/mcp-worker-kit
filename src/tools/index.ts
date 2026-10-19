@@ -7,6 +7,7 @@
 import { CONNECTION_TOOLS, EXAMPLE_TOOLS } from './examples.ts';
 import type { Tool } from './types.ts';
 
+/** Every tool, in the order `tools/list` shows them (after filtering by `toolsFor`). */
 export const TOOLS: Tool[] = [...EXAMPLE_TOOLS, ...CONNECTION_TOOLS];
 
 /** MCP 2025-11-25 server/tools, "Tool Names": 1–128 characters, case-sensitive, from this set. */
