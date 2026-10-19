@@ -7,6 +7,11 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    # @types/node follows the oldest Node version in "engines": a newer major would type-check code that calls APIs
+    # those versions don't have. Raise it by hand when the supported range moves.
+    ignore:
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     directory: /
     schedule:
