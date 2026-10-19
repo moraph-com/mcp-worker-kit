@@ -2,7 +2,18 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { IdentityProvider } from '../src/identity.ts';
 import { continueAuth } from '../src/oauth.ts';
-import { ORIGIN, REDIRECT, authorizeFlow, connect, exchange, form, mcp, pkce, registerClient, setup } from './helpers.ts';
+import {
+  ORIGIN,
+  REDIRECT,
+  authorizeFlow,
+  connect,
+  exchange,
+  form,
+  mcp,
+  pkce,
+  registerClient,
+  setup,
+} from './helpers.ts';
 
 describe('metadata', () => {
   it('describes the protected resource (RFC 9728)', async () => {
@@ -28,7 +39,10 @@ describe('metadata', () => {
     const k = setup();
     const r = await mcp(k, '/mcp', 'tools/list');
     assert.equal(r.status, 401);
-    assert.match(r.headers.get('www-authenticate')!, /resource_metadata="http:\/\/localhost:8787\/\.well-known\/oauth-protected-resource"/);
+    assert.match(
+      r.headers.get('www-authenticate')!,
+      /resource_metadata="http:\/\/localhost:8787\/\.well-known\/oauth-protected-resource"/,
+    );
   });
 });
 
@@ -37,7 +51,11 @@ describe('dynamic client registration', () => {
   for (const uri of bad) {
     it(`refuses redirect URI ${uri}`, async () => {
       const k = setup();
-      const res = await k.call('/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ redirect_uris: [uri] }) });
+      const res = await k.call('/oauth/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ redirect_uris: [uri] }),
+      });
       assert.equal(res.status, 400);
       assert.equal(((await res.json()) as any).error, 'invalid_redirect_uri');
     });
@@ -45,7 +63,13 @@ describe('dynamic client registration', () => {
 
   it('accepts https, loopback http and app schemes', async () => {
     const k = setup();
-    const c = await registerClient(k, { redirect_uris: ['https://a.example/cb', 'http://127.0.0.1:33418/cb', 'cursor://anysphere.cursor-retrieval/oauth/callback'] });
+    const c = await registerClient(k, {
+      redirect_uris: [
+        'https://a.example/cb',
+        'http://127.0.0.1:33418/cb',
+        'cursor://anysphere.cursor-retrieval/oauth/callback',
+      ],
+    });
     assert.match(c.client_id, /^client_[0-9a-f]{32}$/);
     assert.equal(c.client_secret, undefined);
   });
@@ -62,7 +86,11 @@ describe('dynamic client registration', () => {
   it('rate-limits registrations per network', async () => {
     const k = setup();
     for (let i = 0; i < 30; i++) await registerClient(k);
-    const res = await k.call('/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ redirect_uris: [REDIRECT] }) });
+    const res = await k.call('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: [REDIRECT] }),
+    });
     assert.equal(res.status, 429);
   });
 });
@@ -89,7 +117,13 @@ describe('authorization code with PKCE', () => {
   it('requires PKCE S256 on authorize', async () => {
     const k = setup();
     const c = await registerClient(k);
-    const qs = new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: 'x'.repeat(43), code_challenge_method: 'plain' });
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: c.client_id,
+      redirect_uri: REDIRECT,
+      code_challenge: 'x'.repeat(43),
+      code_challenge_method: 'plain',
+    });
     const res = await k.call(`/oauth/authorize?${qs}`);
     assert.equal(res.status, 302);
     assert.equal(new URL(res.headers.get('location')!).searchParams.get('error'), 'invalid_request');
@@ -99,7 +133,13 @@ describe('authorization code with PKCE', () => {
     const k = setup();
     const c = await registerClient(k);
     const { challenge } = await pkce();
-    const qs = new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: 'https://evil.example/cb', code_challenge: challenge, code_challenge_method: 'S256' });
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: c.client_id,
+      redirect_uri: 'https://evil.example/cb',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
     const res = await k.call(`/oauth/authorize?${qs}`);
     assert.equal(res.status, 400);
     assert.equal(res.headers.get('location'), null);
@@ -109,7 +149,14 @@ describe('authorization code with PKCE', () => {
     const k = setup();
     const c = await registerClient(k);
     const { challenge } = await pkce();
-    const qs = new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', resource: 'https://other.example/mcp' });
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: c.client_id,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      resource: 'https://other.example/mcp',
+    });
     const res = await k.call(`/oauth/authorize?${qs}`);
     assert.equal(new URL(res.headers.get('location')!).searchParams.get('error'), 'invalid_target');
   });
@@ -134,7 +181,11 @@ describe('authorization code with PKCE', () => {
     assert.equal((await mcp(k, '/mcp', 'ping', {}, first.access_token)).status, 200);
     const again = await exchange(k, c.client_id, code, verifier);
     assert.equal(again.status, 400);
-    assert.equal((await mcp(k, '/mcp', 'ping', {}, first.access_token)).status, 401, 'tokens from the first exchange stop working');
+    assert.equal(
+      (await mcp(k, '/mcp', 'ping', {}, first.access_token)).status,
+      401,
+      'tokens from the first exchange stop working',
+    );
     assert.equal(k.rows('SELECT revoked_by FROM oauth_grants')[0].revoked_by, 'code_reuse');
   });
 
@@ -161,12 +212,24 @@ describe('authorization code with PKCE', () => {
     const k = setup();
     const c = await registerClient(k);
     const { challenge } = await pkce();
-    const qs = new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' });
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: c.client_id,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
     const a = await k.call(`/oauth/authorize?${qs}`);
     const reqCookie = a.headers.getSetCookie()[0].split(';')[0];
-    const login = await k.call('/dev/login', { ...form({ name: 'Alice' }), headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN } });
+    const login = await k.call('/dev/login', {
+      ...form({ name: 'Alice' }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN },
+    });
     const cookie = `${reqCookie}; ${login.headers.getSetCookie()[0].split(';')[0]}`;
-    const res = await k.call(a.headers.get('location')!, { ...form({ decision: 'approve' }), headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://evil.example', cookie } });
+    const res = await k.call(a.headers.get('location')!, {
+      ...form({ decision: 'approve' }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://evil.example', cookie },
+    });
     assert.equal(res.status, 403);
   });
 
@@ -174,9 +237,18 @@ describe('authorization code with PKCE', () => {
     const k = setup();
     const c = await registerClient(k);
     const { challenge } = await pkce();
-    const qs = new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' });
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: c.client_id,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
     const a = await k.call(`/oauth/authorize?${qs}`);
-    const login = await k.call('/dev/login', { ...form({ name: 'Alice' }), headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN } });
+    const login = await k.call('/dev/login', {
+      ...form({ name: 'Alice' }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN },
+    });
     const cookie = `${a.headers.getSetCookie()[0].split(';')[0]}; ${login.headers.getSetCookie()[0].split(';')[0]}`;
     const res = await k.call(a.headers.get('location')!, { headers: { cookie } });
     const csp = res.headers.get('content-security-policy')!;
@@ -192,7 +264,13 @@ describe('authorization code with PKCE', () => {
     const k = setup();
     const c = await registerClient(k);
     const { challenge } = await pkce();
-    const qs = new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' });
+    const qs = new URLSearchParams({
+      response_type: 'code',
+      client_id: c.client_id,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
     const a = await k.call(`/oauth/authorize?${qs}`);
     const res = await k.call(a.headers.get('location')!);
     assert.equal(res.status, 400);
@@ -265,7 +343,9 @@ describe('daily clean-up', () => {
     k.db.sqlite.exec("INSERT INTO tool_calls (tool, ok, ms, created_at) VALUES ('old', 1, 1, '2000-01-01 00:00:00')");
     const { default: worker } = await import('../src/index.ts');
     const waits: Promise<unknown>[] = [];
-    await worker.scheduled({} as ScheduledController, k.env, { waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as ExecutionContext);
+    await worker.scheduled({} as ScheduledController, k.env, {
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    } as unknown as ExecutionContext);
     await Promise.all(waits);
     assert.equal(k.rows('SELECT * FROM oauth_tokens').length, 0);
     assert.equal(k.rows("SELECT * FROM tool_calls WHERE tool = 'old'").length, 0);
@@ -291,10 +371,14 @@ describe('races and lifetimes', () => {
     const c = await registerClient(k);
     const { verifier, challenge } = await pkce();
     const code = (await authorizeFlow(k, c.client_id, challenge)).get('code')!;
-    const both = await Promise.all([exchange(k, c.client_id, code, verifier), exchange(k, c.client_id, code, verifier)]);
+    const both = await Promise.all([
+      exchange(k, c.client_id, code, verifier),
+      exchange(k, c.client_id, code, verifier),
+    ]);
     const ok = both.filter((r) => r.status === 200);
     assert.ok(ok.length <= 1);
-    for (const r of ok) assert.equal((await mcp(k, '/mcp', 'ping', {}, ((await r.json()) as any).access_token)).status, 401);
+    for (const r of ok)
+      assert.equal((await mcp(k, '/mcp', 'ping', {}, ((await r.json()) as any).access_token)).status, 401);
   });
 
   it('ends a connection at GRANT_MAX_DAYS however often it is refreshed', async () => {
@@ -313,7 +397,9 @@ describe('races and lifetimes', () => {
     k.db.sqlite.exec("UPDATE oauth_grants SET created_at = datetime('now', '-30 days', '+10 minutes')");
     const n = (await (await refresh(k, t.clientId, t.refresh_token)).json()) as any;
     assert.ok(n.expires_in <= 600, `access token lasts ${n.expires_in}s`);
-    const [{ latest }] = k.rows("SELECT MAX(expires_at) AS latest FROM oauth_tokens WHERE kind = 'refresh' AND used_at IS NULL");
+    const [{ latest }] = k.rows(
+      "SELECT MAX(expires_at) AS latest FROM oauth_tokens WHERE kind = 'refresh' AND used_at IS NULL",
+    );
     assert.ok(String(latest) <= String(k.rows("SELECT datetime(created_at, '+30 days') AS e FROM oauth_grants")[0].e));
   });
 });
@@ -323,7 +409,10 @@ describe('spec details', () => {
     const k = setup();
     const c = await registerClient(k, { redirect_uris: ['http://127.0.0.1/callback'] });
     const { challenge } = await pkce();
-    const go = (redirect_uri: string) => k.call(`/oauth/authorize?${new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri, code_challenge: challenge, code_challenge_method: 'S256' })}`);
+    const go = (redirect_uri: string) =>
+      k.call(
+        `/oauth/authorize?${new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri, code_challenge: challenge, code_challenge_method: 'S256' })}`,
+      );
     assert.equal((await go('http://127.0.0.1:49152/callback')).status, 302);
     assert.equal((await go('http://127.0.0.1:49152/other')).status, 400);
     assert.equal((await go('http://localhost:49152/callback')).status, 400);
@@ -334,7 +423,16 @@ describe('spec details', () => {
     const c = await registerClient(k);
     const { verifier, challenge } = await pkce();
     const code = (await authorizeFlow(k, c.client_id, challenge)).get('code')!;
-    const res = await k.call('/oauth/token', form({ grant_type: 'authorization_code', client_id: c.client_id, code, code_verifier: verifier, resource: 'https://other.example/mcp' }));
+    const res = await k.call(
+      '/oauth/token',
+      form({
+        grant_type: 'authorization_code',
+        client_id: c.client_id,
+        code,
+        code_verifier: verifier,
+        resource: 'https://other.example/mcp',
+      }),
+    );
     assert.equal(((await res.json()) as any).error, 'invalid_target');
   });
 
@@ -349,7 +447,11 @@ describe('spec details', () => {
   it('refuses oversized registration and token bodies without reading them whole', async () => {
     const k = setup();
     const big = JSON.stringify({ redirect_uris: [REDIRECT], client_name: 'x'.repeat(20000) });
-    assert.equal((await k.call('/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: big })).status, 413);
+    assert.equal(
+      (await k.call('/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: big }))
+        .status,
+      413,
+    );
     const t = await k.call('/oauth/token', form({ grant_type: 'refresh_token', pad: 'x'.repeat(20000) }));
     assert.equal(t.status, 400);
   });
@@ -360,11 +462,22 @@ describe('spec details', () => {
     k.db.sqlite.exec("UPDATE users SET disabled_at = datetime('now')");
     const c = await registerClient(k);
     const { challenge } = await pkce();
-    const a = await k.call(`/oauth/authorize?${new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' })}`);
+    const a = await k.call(
+      `/oauth/authorize?${new URLSearchParams({ response_type: 'code', client_id: c.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' })}`,
+    );
     // A provider (like Access) that still vouches for the person: the users table has the last word.
-    const idp: IdentityProvider = { name: 'test', currentUser: async () => ({ id: 'dev:alice', name: 'Alice', roles: [] }), loginUrl: () => null };
+    const idp: IdentityProvider = {
+      name: 'test',
+      currentUser: async () => ({ id: 'dev:alice', name: 'Alice', roles: [] }),
+      loginUrl: () => null,
+    };
     const url = new URL(a.headers.get('location')!, ORIGIN);
-    const res = await continueAuth(new Request(url, { headers: { cookie: a.headers.getSetCookie()[0].split(';')[0] } }), k.env, url, idp);
+    const res = await continueAuth(
+      new Request(url, { headers: { cookie: a.headers.getSetCookie()[0].split(';')[0] } }),
+      k.env,
+      url,
+      idp,
+    );
     assert.equal(res.status, 403);
   });
 
@@ -381,11 +494,21 @@ describe('client clean-up', () => {
     const used = await connect(k);
     const unused = await registerClient(k);
     const fresh = await registerClient(k);
-    k.db.sqlite.exec(`UPDATE oauth_clients SET created_at = '2000-01-01 00:00:00' WHERE id IN ('${used.clientId}', '${unused.client_id}')`);
+    k.db.sqlite.exec(
+      `UPDATE oauth_clients SET created_at = '2000-01-01 00:00:00' WHERE id IN ('${used.clientId}', '${unused.client_id}')`,
+    );
     const { default: worker } = await import('../src/index.ts');
     const waits: Promise<unknown>[] = [];
-    await worker.scheduled({} as ScheduledController, k.env, { waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as ExecutionContext);
+    await worker.scheduled({} as ScheduledController, k.env, {
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    } as unknown as ExecutionContext);
     await Promise.all(waits);
-    assert.deepEqual(k.rows('SELECT id FROM oauth_clients ORDER BY id').map((r) => r.id).sort(), [used.clientId, fresh.client_id].sort());
+    assert.deepEqual(
+      k
+        .rows('SELECT id FROM oauth_clients ORDER BY id')
+        .map((r) => r.id)
+        .sort(),
+      [used.clientId, fresh.client_id].sort(),
+    );
   });
 });

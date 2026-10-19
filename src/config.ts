@@ -8,7 +8,8 @@ export const PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'
 /** OAuth scopes, as the consent screen describes them. `read` is always granted; `write` only if the person ticks it. */
 export const SCOPES: Record<string, string> = {
   read: 'See what your account can see through this server’s tools.',
-  write: 'Take everyday actions your account can take through this server’s tools. Never approvals, deletions, payments or access changes.',
+  write:
+    'Take everyday actions your account can take through this server’s tools. Never approvals, deletions, payments or access changes.',
 };
 
 /** Sent to the assistant on initialize. Say what the data is and how to treat it. */

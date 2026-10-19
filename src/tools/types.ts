@@ -28,14 +28,24 @@ export interface Tool {
   title: string;
   description: string;
   inputSchema: Schema & { type: 'object' };
-  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
   access: 'public' | 'signed_in' | ((user: User) => boolean);
   write?: boolean;
   run(c: ToolContext, args: Record<string, unknown>): Promise<unknown>;
 }
 
 export class ToolError extends Error {}
-export const fail = (msg: string): never => { throw new ToolError(msg); };
+export const fail = (msg: string): never => {
+  throw new ToolError(msg);
+};
 
-export const str = (v: unknown, max = 200) => String(v ?? '').trim().slice(0, max);
+export const str = (v: unknown, max = 200) =>
+  String(v ?? '')
+    .trim()
+    .slice(0, max);
 export const lim = (v: unknown, d = 20, max = 50) => Math.min(Math.max(parseInt(String(v), 10) || d, 1), max);

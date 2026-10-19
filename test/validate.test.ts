@@ -16,7 +16,12 @@ describe('argument checking (validate.ts)', () => {
     required: ['n'],
     additionalProperties: false,
   };
-  const ok = [{ n: 1 }, { n: 5, x: 1.5, kind: 'a', tags: ['abc'], maybe: null }, { n: 2, x: 3, maybe: 's' }, { n: 3, free: 'not checked' }];
+  const ok = [
+    { n: 1 },
+    { n: 5, x: 1.5, kind: 'a', tags: ['abc'], maybe: null },
+    { n: 2, x: 3, maybe: 's' },
+    { n: 3, free: 'not checked' },
+  ];
   for (const v of ok) it(`accepts ${JSON.stringify(v)}`, () => assert.equal(check(v, s), null));
 
   const bad: [unknown, RegExp][] = [

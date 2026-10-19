@@ -48,12 +48,12 @@ says. Never set it anywhere else.
 
 ## Connect an assistant
 
-| Client | How |
-| --- | --- |
-| Claude (web, desktop) | Settings → Connectors → Add custom connector → `https://<your-host>/mcp` |
-| Claude Code | `claude mcp add --transport http my-server https://<your-host>/mcp` |
-| Public tools only | Use `https://<your-host>/public`: no sign-in |
-| MCP Inspector | `npx @modelcontextprotocol/inspector`, transport "Streamable HTTP", URL as above |
+| Client                | How                                                                              |
+| --------------------- | -------------------------------------------------------------------------------- |
+| Claude (web, desktop) | Settings → Connectors → Add custom connector → `https://<your-host>/mcp`         |
+| Claude Code           | `claude mcp add --transport http my-server https://<your-host>/mcp`              |
+| Public tools only     | Use `https://<your-host>/public`: no sign-in                                     |
+| MCP Inspector         | `npx @modelcontextprotocol/inspector`, transport "Streamable HTTP", URL as above |
 
 The assistant finds the sign-in endpoints by itself: a request to `/mcp` without a token gets a `401` whose
 `WWW-Authenticate` header points to the metadata.
@@ -82,15 +82,15 @@ sequenceDiagram
     W->>W: re-check grant and person, filter tools, run, record the call
 ```
 
-| File | What |
-| --- | --- |
-| `src/index.ts` | Routes and the daily clean-up cron |
-| `src/mcp.ts` | JSON-RPC over Streamable HTTP (stateless JSON), `toolsFor()`, the audit record |
-| `src/oauth.ts` | The authorization server and `authenticate()` |
-| `src/identity.ts` | `IdentityProvider`, Cloudflare Access, the development sign-in |
-| `src/tools/` | Tool type, argument checking (`validate.ts`), example tools, the tool list |
-| `src/config.ts` | Server name, scopes, instructions sent to assistants, lifetimes |
-| `migrations/0001_init.sql` | Tables, with what each column is for |
+| File                       | What                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| `src/index.ts`             | Routes and the daily clean-up cron                                             |
+| `src/mcp.ts`               | JSON-RPC over Streamable HTTP (stateless JSON), `toolsFor()`, the audit record |
+| `src/oauth.ts`             | The authorization server and `authenticate()`                                  |
+| `src/identity.ts`          | `IdentityProvider`, Cloudflare Access, the development sign-in                 |
+| `src/tools/`               | Tool type, argument checking (`validate.ts`), example tools, the tool list     |
+| `src/config.ts`            | Server name, scopes, instructions sent to assistants, lifetimes                |
+| `migrations/0001_init.sql` | Tables, with what each column is for                                           |
 
 ## Security model
 
@@ -134,11 +134,11 @@ The pattern this kit is built for:
 
 `src/identity.ts` picks a provider from the environment:
 
-| Setting | Provider |
-| --- | --- |
+| Setting                               | Provider                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` | **Cloudflare Access.** Create an Access application covering `https://<your-host>/oauth/continue` (only that path). The Worker verifies the `Cf-Access-Jwt-Assertion` JWT: RS256 signature against your team's keys, audience, issuer and expiry. `ADMIN_EMAILS` gives listed people the `admin` role, re-read on every call. Access is only asked at sign-in, so `GRANT_MAX_DAYS` decides how long a connection outlives someone's removal from Access. |
-| `DEV_LOGIN=1` (localhost only) | **Development** name-only sign-in |
-| nothing | **None.** `/public` works, and connecting to `/mcp` explains that sign-in isn't set up |
+| `DEV_LOGIN=1` (localhost only)        | **Development** name-only sign-in                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| nothing                               | **None.** `/public` works, and connecting to `/mcp` explains that sign-in isn't set up                                                                                                                                                                                                                                                                                                                                                                   |
 
 To use something else, such as your app's session cookie, Auth0, Okta or Clerk, implement the interface and return it from
 `providerFor()`:
@@ -147,12 +147,16 @@ To use something else, such as your app's session cookie, Auth0, Okta or Clerk, 
 export const myProvider: IdentityProvider = {
   name: 'my-app',
   async currentUser(request, env) {
-    const session = await mySession(request, env);            // your existing cookie or JWT check
-    return session ? { id: `app:${session.userId}`, name: session.name, email: session.email, roles: session.roles } : null;
+    const session = await mySession(request, env); // your existing cookie or JWT check
+    return session
+      ? { id: `app:${session.userId}`, name: session.name, email: session.email, roles: session.roles }
+      : null;
   },
   loginUrl: (next) => `https://app.example.com/login?return_to=${encodeURIComponent(`https://mcp.example.com${next}`)}`,
   // Optional: re-check on every tool call (still employed? still allowed?). Return null to end their connections.
-  async lookupUser(id, env) { return myUserById(id.replace(/^app:/, ''), env); },
+  async lookupUser(id, env) {
+    return myUserById(id.replace(/^app:/, ''), env);
+  },
 };
 ```
 

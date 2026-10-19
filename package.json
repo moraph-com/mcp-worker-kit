@@ -2,7 +2,27 @@
   "name": "mcp-worker-kit",
   "version": "0.1.0",
   "description": "A remote MCP server on Cloudflare Workers with OAuth 2.1, permission tiers and an audit trail.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "cloudflare-workers",
+    "oauth2",
+    "oauth2.1",
+    "pkce",
+    "d1",
+    "ai-assistant",
+    "audit-log"
+  ],
+  "homepage": "https://github.com/moraph-com/mcp-worker-kit#readme",
+  "bugs": {
+    "url": "https://github.com/moraph-com/mcp-worker-kit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moraph-com/mcp-worker-kit.git"
+  },
   "license": "Apache-2.0",
+  "author": "Moraph (https://www.moraph.com)",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,12 +34,20 @@
     "db:migrate": "wrangler d1 migrations apply mcp-worker-kit --remote",
     "db:migrate:local": "wrangler d1 migrations apply mcp-worker-kit --local",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --test-reporter=spec test/*.test.ts"
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --test --test-reporter=spec test/*.test.ts",
+    "check": "npm run typecheck && npm run format:check && npm test"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261019.1",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
+    "prettier": "^3.9.10",
     "typescript": "~5.9.3",
+    "typescript-eslint": "^8.72.0",
     "wrangler": "^4.151.2"
   }
 }

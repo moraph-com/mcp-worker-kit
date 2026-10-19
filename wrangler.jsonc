@@ -14,8 +14,8 @@
       "database_name": "mcp-worker-kit",
       // `npx wrangler d1 create mcp-worker-kit` prints the id to put here.
       "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "migrations"
-    }
+      "migrations_dir": "migrations",
+    },
   ],
 
   "vars": {
@@ -23,10 +23,10 @@
     // have chosen an identity provider: with none configured, /mcp works only for the public tools.
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
-    "ADMIN_EMAILS": ""
+    "ADMIN_EMAILS": "",
   },
 
   // Local development only: `wrangler dev` reads .dev.vars, where DEV_LOGIN=1 turns on the name-only dev sign-in.
   // It never works on a hostname other than localhost or 127.0.0.1.
-  "dev": { "port": 8787 }
+  "dev": { "port": 8787 },
 }

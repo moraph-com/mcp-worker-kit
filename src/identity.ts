@@ -11,7 +11,20 @@
 // To use your own (Auth0, Okta, Clerk, your app's session cookie), implement IdentityProvider and return it from
 // providerFor(). README "Plugging in your sign-in".
 import type { Env } from './env.ts';
-import { b64urlDecode, clean, esc, one, page, parseCookies, q, randomId, safeNext, sameOrigin, sha256, sqlTime } from './util.ts';
+import {
+  b64urlDecode,
+  clean,
+  esc,
+  one,
+  page,
+  parseCookies,
+  q,
+  randomId,
+  safeNext,
+  sameOrigin,
+  sha256,
+  sqlTime,
+} from './util.ts';
 
 export interface User {
   /** Stable and provider-scoped, e.g. "access:<sub>". Grants and audit records point at it. */
@@ -58,7 +71,10 @@ const SKEW_SECONDS = 60;
 
 async function accessKeys(domain: string, kid: string): Promise<Jwk | null> {
   const age = jwksCache && jwksCache.domain === domain ? Date.now() - jwksCache.at : Infinity;
-  if (age >= JWKS_SECONDS * 1000 || (!jwksCache!.keys.some((k) => k.kid === kid) && age >= JWKS_REFETCH_SECONDS * 1000)) {
+  if (
+    age >= JWKS_SECONDS * 1000 ||
+    (!jwksCache!.keys.some((k) => k.kid === kid) && age >= JWKS_REFETCH_SECONDS * 1000)
+  ) {
     const res = await fetch(`https://${domain}/cdn-cgi/access/certs`);
     if (!res.ok) throw new Error(`Access JWKS: HTTP ${res.status}`);
     const body = (await res.json()) as { keys?: Jwk[] };
@@ -67,11 +83,19 @@ async function accessKeys(domain: string, kid: string): Promise<Jwk | null> {
   return jwksCache!.keys.find((k) => k.kid === kid) || null;
 }
 /** For tests: forget the cached keys. */
-export const resetAccessKeys = () => { jwksCache = null; };
+export const resetAccessKeys = () => {
+  jwksCache = null;
+};
 
 /** The verified claims of a Cloudflare Access JWT, or null. */
-export async function verifyAccessJwt(token: string, env: Env, now = Date.now()): Promise<Record<string, unknown> | null> {
-  const domain = String(env.ACCESS_TEAM_DOMAIN || '').replace(/^https:\/\//, '').replace(/\/+$/, '');
+export async function verifyAccessJwt(
+  token: string,
+  env: Env,
+  now = Date.now(),
+): Promise<Record<string, unknown> | null> {
+  const domain = String(env.ACCESS_TEAM_DOMAIN || '')
+    .replace(/^https:\/\//, '')
+    .replace(/\/+$/, '');
   const parts = token.split('.');
   if (!domain || !env.ACCESS_AUD || parts.length !== 3) return null;
   try {
@@ -79,8 +103,19 @@ export async function verifyAccessJwt(token: string, env: Env, now = Date.now())
     if (header.alg !== 'RS256' || typeof header.kid !== 'string') return null;
     const jwk = await accessKeys(domain, header.kid);
     if (!jwk) return null;
-    const key = await crypto.subtle.importKey('jwk', { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: 'RS256', ext: true }, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
-    const ok = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, b64urlDecode(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
+    const key = await crypto.subtle.importKey(
+      'jwk',
+      { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: 'RS256', ext: true },
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false,
+      ['verify'],
+    );
+    const ok = await crypto.subtle.verify(
+      'RSASSA-PKCS1-v1_5',
+      key,
+      b64urlDecode(parts[2]),
+      new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
+    );
     if (!ok) return null;
     const claims = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[1])));
     const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
@@ -97,7 +132,11 @@ export async function verifyAccessJwt(token: string, env: Env, now = Date.now())
 }
 
 const accessRoles = (email: string | null | undefined, env: Env) => {
-  const admins = String(env.ADMIN_EMAILS || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+  const admins = String(env.ADMIN_EMAILS || '')
+    .toLowerCase()
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   return email && admins.includes(email.toLowerCase()) ? ['admin'] : [];
 };
 
@@ -114,7 +153,11 @@ export const accessProvider: IdentityProvider = {
   // Every tool call: the person must not be disabled here, and their roles follow ADMIN_EMAILS as it is now, not as
   // it was when they connected.
   async lookupUser(id, env) {
-    const u = await one<{ id: string; name: string; email: string | null }>(env, 'SELECT id, name, email FROM users WHERE id = ? AND disabled_at IS NULL', id);
+    const u = await one<{ id: string; name: string; email: string | null }>(
+      env,
+      'SELECT id, name, email FROM users WHERE id = ? AND disabled_at IS NULL',
+      id,
+    );
     return u ? { id: u.id, name: u.name, email: u.email, roles: accessRoles(u.email, env) } : null;
   },
   // Access protects /oauth/continue itself, so a request that reaches the Worker without a token means Access isn't
@@ -133,9 +176,13 @@ export const devProvider: IdentityProvider = {
     if (!devOn(env, url)) return null;
     const token = parseCookies(request)[DEV_COOKIE];
     if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
-    const row = await one<{ id: string; name: string; email: string | null; roles: string }>(env,
+    const row = await one<{ id: string; name: string; email: string | null; roles: string }>(
+      env,
       `SELECT u.id, u.name, u.email, u.roles FROM dev_sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL`, await sha256(token), sqlTime(Date.now()));
+       WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL`,
+      await sha256(token),
+      sqlTime(Date.now()),
+    );
     return row ? { id: row.id, name: row.name, email: row.email, roles: JSON.parse(row.roles) } : null;
   },
   loginUrl: (next) => `/dev/login?next=${encodeURIComponent(next)}`,
@@ -144,28 +191,58 @@ export const devProvider: IdentityProvider = {
     if (!devOn(env, url)) return new Response('Not found', { status: 404 });
     const next = safeNext(url.searchParams.get('next'));
     if (url.pathname === '/dev/logout') {
-      return new Response(null, { status: 302, headers: { location: '/', 'set-cookie': `${DEV_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax` } });
+      return new Response(null, {
+        status: 302,
+        headers: { location: '/', 'set-cookie': `${DEV_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax` },
+      });
     }
     if (request.method === 'POST') {
       if (!sameOrigin(request)) return page('Sign in', '<h1>That sign-in didn’t come from this page</h1>', 403);
       const f = await request.formData();
       const name = clean(f.get('name'), 60);
-      if (!name) return page('Sign in', `<h1>Enter a name</h1><p><a href="/dev/login?next=${esc(encodeURIComponent(next))}">Back</a></p>`, 400);
+      if (!name)
+        return page(
+          'Sign in',
+          `<h1>Enter a name</h1><p><a href="/dev/login?next=${esc(encodeURIComponent(next))}">Back</a></p>`,
+          400,
+        );
       const id = `dev:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
       const roles = f.get('admin') === '1' ? ['admin'] : [];
       const token = randomId(32);
       await env.DB.batch([
-        q(env, `INSERT INTO users (id, name, roles) VALUES (?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET name = excluded.name, roles = excluded.roles, updated_at = datetime('now')`, id, name, JSON.stringify(roles)),
-        q(env, 'INSERT INTO dev_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)', await sha256(token), id, sqlTime(Date.now() + DEV_HOURS * 3600e3)),
+        q(
+          env,
+          `INSERT INTO users (id, name, roles) VALUES (?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET name = excluded.name, roles = excluded.roles, updated_at = datetime('now')`,
+          id,
+          name,
+          JSON.stringify(roles),
+        ),
+        q(
+          env,
+          'INSERT INTO dev_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)',
+          await sha256(token),
+          id,
+          sqlTime(Date.now() + DEV_HOURS * 3600e3),
+        ),
       ]);
-      return new Response(null, { status: 302, headers: { location: next, 'set-cookie': `${DEV_COOKIE}=${token}; Path=/; Max-Age=${DEV_HOURS * 3600}; HttpOnly; Secure; SameSite=Lax`, 'cache-control': 'no-store' } });
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: next,
+          'set-cookie': `${DEV_COOKIE}=${token}; Path=/; Max-Age=${DEV_HOURS * 3600}; HttpOnly; Secure; SameSite=Lax`,
+          'cache-control': 'no-store',
+        },
+      });
     }
-    return page('Sign in (development)', `<h1>Development sign-in</h1>
+    return page(
+      'Sign in (development)',
+      `<h1>Development sign-in</h1>
 <p class="small">This form exists only on localhost with <code>DEV_LOGIN=1</code>. It asks for a name and nothing else, so never turn it on anywhere real.</p>
 <form method="post" action="/dev/login?next=${esc(encodeURIComponent(next))}">
 <p><label>Name <input type="text" name="name" required maxlength="60" autofocus></label></p>
 <p><label><input type="checkbox" name="admin" value="1"> Give this person the admin role</label></p>
-<p><button type="submit">Sign in</button></p></form>`);
+<p><button type="submit">Sign in</button></p></form>`,
+    );
   },
 };
