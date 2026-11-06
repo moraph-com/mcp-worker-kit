@@ -1,6 +1,6 @@
 name: Bug report
 description: Something in the kit doesn't work as documented.
-labels: [bug]
+type: Bug
 body:
   - type: markdown
     attributes:
