@@ -1,8 +1,15 @@
-# mcp-worker-kit
+# Fusion Center Labs — mcp-worker-kit
+
+A remote MCP server on Cloudflare Workers: OAuth 2.1 with PKCE, read/write consent, pluggable sign-in (Cloudflare Access built in) and an audit trail.
 
 [![CI](https://github.com/moraph-com/mcp-worker-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/moraph-com/mcp-worker-kit/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![MCP 2025-11-25](https://img.shields.io/badge/MCP-2025--11--25-informational.svg)](https://modelcontextprotocol.io/specification/2025-11-25)
+![Platform: Cloudflare Workers](https://img.shields.io/badge/platform-Cloudflare%20Workers-orange.svg)
+
+> Part of the Moraph portfolio · Project board: [Moraph · Fusion Center Labs](https://github.com/orgs/moraph-com/projects/4) · Initiative: [moraph-com/mcp-worker-kit#6](https://github.com/moraph-com/mcp-worker-kit/issues/6)
+
+## Overview
 
 A remote [Model Context Protocol](https://modelcontextprotocol.io) server on Cloudflare Workers, with OAuth 2.1 sign-in,
 permission tiers and an audit trail. Connect Claude, ChatGPT, Cursor or any MCP client to your data. The assistant acts
@@ -10,6 +17,12 @@ as the person using it and never goes further than that person may.
 
 Extracted from the MCP server behind [mcp.moraph.com](https://mcp.moraph.com), with Moraph's own tools, accounts and
 data taken out.
+
+It is for teams that want to connect AI assistants (Claude, ChatGPT, Cursor or any MCP client) to their own data behind their existing sign-in. It is a starting point you deploy to your own Cloudflare account, not a hosted service. The current release is [v0.1.0](https://github.com/moraph-com/mcp-worker-kit/releases/tag/v0.1.0) (2026-10-19); see [CHANGELOG.md](CHANGELOG.md).
+
+The kit is published by Fusion Center Labs, the open-source work of the [Moraph Fusion Center](https://www.moraph.com/fusioncenter), Moraph's engineering unit.
+
+## Features
 
 - **Two endpoints.** `/public` needs no sign-in and serves public tools. `/mcp` needs an OAuth token and adds what the
   signed-in person's account may see and do.
@@ -26,10 +39,47 @@ data taken out.
   refusals included. It never stores arguments, results or anything else the caller typed.
 - **Small and dependency-free.** TypeScript, D1 and no runtime dependencies. It's small enough to read in one
   sitting, and every module explains its design decisions with the RFC or MCP spec section behind them.
+- **Example tools.** `server_time`, `search_notes`, `create_note`, `audit_log`, `my_connections` and `revoke_connection` (`src/tools/examples.ts`).
+- **Daily clean-up.** A cron trigger (`17 4 * * *`) removes expired OAuth rows, old grants and audit records older than 13 months.
 
-## Deploy
+## Tech stack
 
-You need Node 22.18 or later and a Cloudflare account.
+- **Language:** TypeScript (no runtime dependencies), checked with `tsc`, ESLint (type-aware typescript-eslint) and Prettier.
+- **Runtime:** Cloudflare Workers (`wrangler.jsonc`, `compatibility_date` 2026-10-01, observability on).
+- **Cloudflare bindings:** D1 database `DB` (`mcp-worker-kit`, migrations in `migrations/`); cron trigger for the daily clean-up; optional Workers Rate Limiting binding `RATE_LIMITER` (commented out by default).
+- **Protocols:** MCP Streamable HTTP (stateless JSON, protocol versions 2024-11-05 to 2025-11-25), OAuth 2.1 (RFC 9728, RFC 8414, RFC 7591, RFC 7009, RFC 8707, PKCE S256).
+- **Sign-in:** Cloudflare Access (built in) or your own `IdentityProvider`.
+- **Tests:** `node:test` against an in-memory D1 stand-in built on `node:sqlite`; Node 22.18 or later.
+
+## Repository structure
+
+```
+src/                 Worker source (routes, MCP endpoint, OAuth server, identity providers, config, utilities)
+src/tools/           Tool type, argument checking, example tools and the tool list
+migrations/          D1 schema (0001_init.sql), with what each column is for
+test/                node:test suites for OAuth, MCP, identity and validation, plus the in-memory D1 stand-in
+.github/             CI workflow, Dependabot config, issue forms and PR template
+wrangler.jsonc       Worker configuration: D1 binding, cron, vars, optional rate limiter
+```
+
+| File                       | What                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| `src/index.ts`             | Routes, the `Origin` check, the optional rate limiter, the daily clean-up cron           |
+| `src/mcp.ts`               | JSON-RPC over Streamable HTTP (stateless JSON), `toolsFor()`, the audit record           |
+| `src/oauth.ts`             | The authorization server and `authenticate()`                                            |
+| `src/identity.ts`          | `IdentityProvider`, Cloudflare Access, the development sign-in                           |
+| `src/tools/`               | Tool type, argument checking (`validate.ts`), example tools, the tool list               |
+| `src/config.ts`            | Server name, scopes, instructions sent to assistants, every lifetime and limit           |
+| `src/util.ts`              | Hashing, the byte-capped body reader, per-network keys, JSON and strict-CSP HTML helpers |
+| `migrations/0001_init.sql` | Tables, with what each column is for                                                     |
+
+## Getting started
+
+### Prerequisites
+
+Node 22.18 or later (`engines` in `package.json`) and a Cloudflare account.
+
+### Install and deploy to your account
 
 ```sh
 git clone https://github.com/moraph-com/mcp-worker-kit && cd mcp-worker-kit
@@ -57,7 +107,56 @@ npm run dev                                   # http://localhost:8787
 `DEV_LOGIN=1` turns on a name-only sign-in form. It works only on `localhost` and `127.0.0.1`, whatever the setting
 says. Never set it anywhere else.
 
-## Connect an assistant
+### Environment variables and secrets
+
+| Setting                                | Where                            | What                                                                          |
+| -------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------- |
+| `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`     | `vars` in `wrangler.jsonc`       | Turn on Cloudflare Access sign-in ([below](#plugging-in-your-sign-in))        |
+| `ADMIN_EMAILS`                         | `vars`                           | Comma-separated emails with the `admin` role under Access                     |
+| `ALLOWED_ORIGINS`                      | `vars`                           | Browser origins allowed to call `/mcp` and `/public` besides this one, or `*` |
+| `IP_SALT`                              | `wrangler secret put`            | Salt for the per-network keys stored with registrations and sign-in attempts  |
+| `RATE_LIMITER`                         | `ratelimits` in `wrangler.jsonc` | Optional per-network rate limit on the anonymous endpoints (commented out)    |
+| `DEV_LOGIN`                            | `.dev.vars` only                 | `1` turns on the development sign-in, on localhost only                       |
+| Lifetimes, limits, scopes, server name | `src/config.ts`                  | Access token 1 h, refresh 30 days, connection 30 days max, audit 13 months, … |
+
+### Tests and checks
+
+```sh
+npm test               # node:test against an in-memory D1 stand-in (node:sqlite); Node 22.18+ runs the TypeScript directly
+npm run typecheck
+npm run lint           # ESLint with type-aware typescript-eslint rules
+npm run format         # Prettier
+npm run check          # everything CI runs
+```
+
+The tests drive the real `fetch` handler through the full flows: registration rules, the PKCE flow, the wrong
+verifier, code reuse, refresh rotation and reuse detection (including two requests racing, with simulated D1 latency),
+grant lifetimes, token audience, revocation, open-redirect and consent protections, `Origin` checks, scope filtering,
+refusals, argument checking (including prototype-named keys), JSON-RPC edge cases, protocol versions, the audit trail,
+Access JWT verification (tampered, expired, wrong-audience, `alg: none` and HS256-confusion tokens) and the dev sign-in's
+localhost lock.
+
+## Deployment
+
+This repository is a template: each adopter deploys it to their own Cloudflare account with `npm run deploy` (`wrangler deploy`), after `npm run db:migrate` applies the D1 migrations remotely. The only secret is `IP_SALT` (`npx wrangler secret put IP_SALT`); everything else is in `vars` in `wrangler.jsonc`.
+
+- CI (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull requests: typecheck, lint, format check and tests on Node 22 and 24, then bundles the Worker with `wrangler deploy --dry-run`. CI does not deploy.
+- Releases are tagged `vX.Y.Z` and recorded in [CHANGELOG.md](CHANGELOG.md) (Keep a Changelog, Semantic Versioning). The next release is tracked by the [v0.2.0 milestone](https://github.com/moraph-com/mcp-worker-kit/milestone/1).
+- TODO(confirm): whether Moraph's own deployment behind [mcp.moraph.com](https://mcp.moraph.com) is built from this repository or from a private fork.
+
+## Project management
+
+Work is tracked on the [Moraph · Fusion Center Labs](https://github.com/orgs/moraph-com/projects/4) project board, under the initiative [moraph-com/mcp-worker-kit#6](https://github.com/moraph-com/mcp-worker-kit/issues/6).
+
+- **Hierarchy:** Initiative > Epic > Feature / Task / Bug, built with sub-issues and GitHub issue types (no type labels). This repo's Epics include [MCP 2025-11-25 spec gaps](https://github.com/moraph-com/mcp-worker-kit/issues/7), [Dependabot and CI health](https://github.com/moraph-com/mcp-worker-kit/issues/8) and [Documentation & developer experience](https://github.com/moraph-com/mcp-worker-kit/issues/9).
+- **Issue forms:** [Bug report](https://github.com/moraph-com/mcp-worker-kit/issues/new?template=bug_report.yml) and [Feature request](https://github.com/moraph-com/mcp-worker-kit/issues/new?template=feature_request.yml). Security problems go through a private advisory, not an issue.
+- **Labels:** `needs-triage`, `needs-info`, `blocked`, `security`, `performance`, `accessibility`, `documentation`, `dependencies`, `good first issue`, `help wanted`, plus `platform:worker`, `platform:mcp` and `area:oauth`, `area:mcp-protocol`, `area:ci`.
+- **Board fields:** Status (Backlog, Ready, In progress, In review, Done), Priority (P0–P3), Size (XS–XL), Iteration (two weeks), Start and Target date, Platform, Area.
+- **Pull requests:** link the issue with `Closes #n` so merging moves it to Done. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [PR template](.github/pull_request_template.md).
+
+## Reference
+
+### Connect an assistant
 
 | Client                | How                                                                                   |
 | --------------------- | ------------------------------------------------------------------------------------- |
@@ -72,7 +171,7 @@ origin to `ALLOWED_ORIGINS`, e.g. `http://localhost:6274`.
 The assistant finds the sign-in endpoints by itself: a request to `/mcp` without a token gets a `401` whose
 `WWW-Authenticate` header points to the metadata.
 
-## How it fits together
+### How it fits together
 
 ```mermaid
 sequenceDiagram
@@ -96,30 +195,7 @@ sequenceDiagram
     W->>W: re-check token audience, grant and person, filter tools, run, record the call
 ```
 
-| File                       | What                                                                                     |
-| -------------------------- | ---------------------------------------------------------------------------------------- |
-| `src/index.ts`             | Routes, the `Origin` check, the optional rate limiter, the daily clean-up cron           |
-| `src/mcp.ts`               | JSON-RPC over Streamable HTTP (stateless JSON), `toolsFor()`, the audit record           |
-| `src/oauth.ts`             | The authorization server and `authenticate()`                                            |
-| `src/identity.ts`          | `IdentityProvider`, Cloudflare Access, the development sign-in                           |
-| `src/tools/`               | Tool type, argument checking (`validate.ts`), example tools, the tool list               |
-| `src/config.ts`            | Server name, scopes, instructions sent to assistants, every lifetime and limit           |
-| `src/util.ts`              | Hashing, the byte-capped body reader, per-network keys, JSON and strict-CSP HTML helpers |
-| `migrations/0001_init.sql` | Tables, with what each column is for                                                     |
-
-## Settings
-
-| Setting                                | Where                            | What                                                                          |
-| -------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------- |
-| `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`     | `vars` in `wrangler.jsonc`       | Turn on Cloudflare Access sign-in ([below](#plugging-in-your-sign-in))        |
-| `ADMIN_EMAILS`                         | `vars`                           | Comma-separated emails with the `admin` role under Access                     |
-| `ALLOWED_ORIGINS`                      | `vars`                           | Browser origins allowed to call `/mcp` and `/public` besides this one, or `*` |
-| `IP_SALT`                              | `wrangler secret put`            | Salt for the per-network keys stored with registrations and sign-in attempts  |
-| `RATE_LIMITER`                         | `ratelimits` in `wrangler.jsonc` | Optional per-network rate limit on the anonymous endpoints (commented out)    |
-| `DEV_LOGIN`                            | `.dev.vars` only                 | `1` turns on the development sign-in, on localhost only                       |
-| Lifetimes, limits, scopes, server name | `src/config.ts`                  | Access token 1 h, refresh 30 days, connection 30 days max, audit 13 months, … |
-
-## Security model
+### Security model
 
 - **Secrets are stored hashed.** Client secrets, authorization codes, access and refresh tokens, and dev sessions are
   stored as SHA-256 only. A database leak doesn't hand out working tokens.
@@ -155,7 +231,7 @@ sequenceDiagram
   assistant saw. For argument errors, which can quote what was typed, it records a fixed message instead. The cron
   job removes rows after 13 months.
 
-### What assistants can't do: keep it that way
+#### What assistants can't do: keep it that way
 
 The pattern this kit is built for:
 
@@ -166,7 +242,7 @@ The pattern this kit is built for:
    deletions of other people's data, payments, role or access changes, invitations and downloads of confidential
    documents. Don't write tools for them. Give the assistant a link instead.
 
-## Plugging in your sign-in
+### Plugging in your sign-in
 
 `src/identity.ts` picks a provider from the environment:
 
@@ -207,7 +283,7 @@ export const myProvider: IdentityProvider = {
 Never write a provider that accepts a password typed into this server. The point is that the assistant's sign-in goes
 through the sign-in your people already trust, with its two-step verification and its rules.
 
-## Adding tools
+### Adding tools
 
 A tool is an object in `src/tools/`, added to `TOOLS` in `src/tools/index.ts`:
 
@@ -245,24 +321,7 @@ export const listInvoices: Tool = {
 - Annotations such as `readOnlyHint` are hints for clients, not a security boundary. `access` and `write` are.
 - Scope every query to `c.user`. The tool runs as the person, so it should see what they see and nothing more.
 
-## Development
-
-```sh
-npm test               # node:test against an in-memory D1 stand-in (node:sqlite); Node 22.18+ runs the TypeScript directly
-npm run typecheck
-npm run lint           # ESLint with type-aware typescript-eslint rules
-npm run format         # Prettier
-npm run check          # everything CI runs
-```
-
-The tests drive the real `fetch` handler through the full flows: registration rules, the PKCE flow, the wrong
-verifier, code reuse, refresh rotation and reuse detection (including two requests racing, with simulated D1 latency),
-grant lifetimes, token audience, revocation, open-redirect and consent protections, `Origin` checks, scope filtering,
-refusals, argument checking (including prototype-named keys), JSON-RPC edge cases, protocol versions, the audit trail,
-Access JWT verification (tampered, expired, wrong-audience, `alg: none` and HS256-confusion tokens) and the dev sign-in's
-localhost lock.
-
-## Limits
+### Limits
 
 - Stateless JSON responses only. There's no SSE stream, no server-to-client requests and no resumable sessions. Tools
   and results cover most uses of a remote server. Add a Durable Object if you need sessions.
@@ -280,7 +339,19 @@ localhost lock.
   `REGISTRATIONS_PER_HOUR` for a large rollout. Turn on `RATE_LIMITER`, or put Cloudflare WAF rate limiting in front, if
   you expect abuse.
 
-## License
+## Related repositories
+
+- [moraph-com/regulated-workflow-schemas](https://github.com/moraph-com/regulated-workflow-schemas) — open JSON Schema record formats for regulated workflows, with a validator that also runs in Cloudflare Workers.
+- [moraph-com/moraph-internal-experts](https://github.com/moraph-com/moraph-internal-experts) (private) — build system for Moraph's model briefings.
+- [moraph-com/adv-research](https://github.com/moraph-com/adv-research) (private) — D1 research database built from public regulatory filings; exposes MCP tools.
+
+## Security
+
+Please report vulnerabilities privately: email **security@moraph.com** or use GitHub's [private vulnerability reporting](https://github.com/moraph-com/mcp-worker-kit/security/advisories/new). See [SECURITY.md](SECURITY.md) for the deployment hardening checklist and Moraph's [vulnerability reporting policy](https://trust.moraph.com/vulnerability-reporting).
+
+## License / ownership
 
 [Apache-2.0](LICENSE). Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Security reports: see [SECURITY.md](SECURITY.md).
+
+Copyright Moraph. See [NOTICE](NOTICE).
