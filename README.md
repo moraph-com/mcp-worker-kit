@@ -142,7 +142,7 @@ This repository is a template: each adopter deploys it to their own Cloudflare a
 
 - CI (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull requests: typecheck, lint, format check and tests on Node 22 and 24, then bundles the Worker with `wrangler deploy --dry-run`. CI does not deploy.
 - Releases are tagged `vX.Y.Z` and recorded in [CHANGELOG.md](CHANGELOG.md) (Keep a Changelog, Semantic Versioning). The next release is tracked by the [v0.2.0 milestone](https://github.com/moraph-com/mcp-worker-kit/milestone/1).
-- TODO(confirm): whether Moraph's own deployment behind [mcp.moraph.com](https://mcp.moraph.com) is built from this repository or from a private fork.
+- This README covers the kit and its tagged releases only; it does not describe how any particular deployment, such as [mcp.moraph.com](https://mcp.moraph.com), is built.
 
 ## Project management
 
