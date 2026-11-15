@@ -41,13 +41,13 @@
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261019.1",
+    "@cloudflare/workers-types": "^5.20261112.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.19.2",
-    "eslint": "^10.13.0",
-    "prettier": "^3.9.10",
+    "eslint": "^10.14.0",
+    "prettier": "^3.10.0",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.72.0",
-    "wrangler": "^4.156.0"
+    "typescript-eslint": "^8.72.2",
+    "wrangler": "^4.160.1"
   }
 }
