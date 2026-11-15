@@ -12,6 +12,9 @@ updates:
     ignore:
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
+      # TypeScript 7 is held until typescript-eslint supports it (8.x peer range is <6.1.0). Lift this when it does.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     directory: /
     schedule:
