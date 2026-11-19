@@ -7,7 +7,7 @@ A remote MCP server on Cloudflare Workers: OAuth 2.1 with PKCE, read/write conse
 [![MCP 2025-11-25](https://img.shields.io/badge/MCP-2025--11--25-informational.svg)](https://modelcontextprotocol.io/specification/2025-11-25)
 ![Platform: Cloudflare Workers](https://img.shields.io/badge/platform-Cloudflare%20Workers-orange.svg)
 
-> Part of the Moraph portfolio · Project board: [Moraph · Fusion Center Labs](https://github.com/orgs/moraph-com/projects/4) · Initiative: [moraph-com/mcp-worker-kit#6](https://github.com/moraph-com/mcp-worker-kit/issues/6)
+> Part of the Moraph portfolio · Open work: [issues](https://github.com/moraph-com/mcp-worker-kit/issues) · Initiative: [moraph-com/mcp-worker-kit#6](https://github.com/moraph-com/mcp-worker-kit/issues/6)
 
 ## Overview
 
@@ -146,7 +146,7 @@ This repository is a template: each adopter deploys it to their own Cloudflare a
 
 ## Project management
 
-Work is tracked on the [Moraph · Fusion Center Labs](https://github.com/orgs/moraph-com/projects/4) project board, under the initiative [moraph-com/mcp-worker-kit#6](https://github.com/moraph-com/mcp-worker-kit/issues/6).
+Work is tracked in this repository's [issues](https://github.com/moraph-com/mcp-worker-kit/issues), under the initiative [moraph-com/mcp-worker-kit#6](https://github.com/moraph-com/mcp-worker-kit/issues/6).
 
 - **Hierarchy:** Initiative > Epic > Feature / Task / Bug, built with sub-issues and GitHub issue types (no type labels). This repo's Epics include [MCP 2025-11-25 spec gaps](https://github.com/moraph-com/mcp-worker-kit/issues/7), [Dependabot and CI health](https://github.com/moraph-com/mcp-worker-kit/issues/8) and [Documentation & developer experience](https://github.com/moraph-com/mcp-worker-kit/issues/9).
 - **Issue forms:** [Bug report](https://github.com/moraph-com/mcp-worker-kit/issues/new?template=bug_report.yml) and [Feature request](https://github.com/moraph-com/mcp-worker-kit/issues/new?template=feature_request.yml). Security problems go through a private advisory, not an issue.
