@@ -7,7 +7,7 @@ A remote MCP server on Cloudflare Workers: OAuth 2.1 with PKCE, read/write conse
 [![MCP 2025-11-25](https://img.shields.io/badge/MCP-2025--11--25-informational.svg)](https://modelcontextprotocol.io/specification/2025-11-25)
 ![Platform: Cloudflare Workers](https://img.shields.io/badge/platform-Cloudflare%20Workers-orange.svg)
 
-> Part of the Moraph portfolio · Open work: [issues](https://github.com/moraph-com/mcp-worker-kit/issues) · Initiative: [moraph-com/mcp-worker-kit#6](https://github.com/moraph-com/mcp-worker-kit/issues/6)
+> Part of the Moraph portfolio · Open work: [issues](https://github.com/moraph-com/mcp-worker-kit/issues) · Initiative: [moraph-com/mcp-worker-kit#25](https://github.com/moraph-com/mcp-worker-kit/issues/25)
 
 ## Overview
 
@@ -146,9 +146,9 @@ This repository is a template: each adopter deploys it to their own Cloudflare a
 
 ## Project management
 
-Work is tracked in this repository's [issues](https://github.com/moraph-com/mcp-worker-kit/issues), under the initiative [moraph-com/mcp-worker-kit#6](https://github.com/moraph-com/mcp-worker-kit/issues/6).
+Work is tracked in this repository's [issues](https://github.com/moraph-com/mcp-worker-kit/issues), under the initiative [moraph-com/mcp-worker-kit#25](https://github.com/moraph-com/mcp-worker-kit/issues/25).
 
-- **Hierarchy:** Initiative > Epic > Feature / Task / Bug, built with sub-issues and GitHub issue types (no type labels). This repo's Epics include [MCP 2025-11-25 spec gaps](https://github.com/moraph-com/mcp-worker-kit/issues/7), [Dependabot and CI health](https://github.com/moraph-com/mcp-worker-kit/issues/8) and [Documentation & developer experience](https://github.com/moraph-com/mcp-worker-kit/issues/9).
+- **Hierarchy:** Initiative > Epic > Feature / Task / Bug, built with sub-issues and GitHub issue types (no type labels). This repo's Epics include [MCP 2025-11-25 spec gaps](https://github.com/moraph-com/mcp-worker-kit/issues/7), [Dependabot and CI health](https://github.com/moraph-com/mcp-worker-kit/issues/8) and [Documentation & developer experience](https://github.com/moraph-com/mcp-worker-kit/issues/26).
 - **Issue forms:** [Bug report](https://github.com/moraph-com/mcp-worker-kit/issues/new?template=bug_report.yml) and [Feature request](https://github.com/moraph-com/mcp-worker-kit/issues/new?template=feature_request.yml). Security problems go through a private advisory, not an issue.
 - **Labels:** `needs-triage`, `needs-info`, `blocked`, `security`, `performance`, `accessibility`, `documentation`, `dependencies`, `good first issue`, `help wanted`, plus `platform:worker`, `platform:mcp` and `area:oauth`, `area:mcp-protocol`, `area:ci`.
 - **Board fields:** Status (Backlog, Ready, In progress, In review, Done), Priority (P0–P3), Size (XS–XL), Iteration (two weeks), Start and Target date, Platform, Area.
@@ -342,8 +342,6 @@ export const listInvoices: Tool = {
 ## Related repositories
 
 - [moraph-com/regulated-workflow-schemas](https://github.com/moraph-com/regulated-workflow-schemas) — open JSON Schema record formats for regulated workflows, with a validator that also runs in Cloudflare Workers.
-- [moraph-com/moraph-internal-experts](https://github.com/moraph-com/moraph-internal-experts) (private) — build system for Moraph's model briefings.
-- [moraph-com/adv-research](https://github.com/moraph-com/adv-research) (private) — D1 research database built from public regulatory filings; exposes MCP tools.
 
 ## Security
 
